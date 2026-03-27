@@ -2,15 +2,17 @@ import * as http from 'http';
 import * as url from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { MCPServerSettings, ServerStatus, MCPClient, ToolDefinition } from './types';
-import { SceneTools } from './tools/scene-tools';
-import { NodeTools } from './tools/node-tools';
-import { ComponentTools } from './tools/component-tools';
-import { PrefabTools } from './tools/prefab-tools';
-import { ProjectTools } from './tools/project-tools';
-import { DebugTools } from './tools/debug-tools';
-import { PreferencesTools } from './tools/preferences-tools';
-import { SceneAdvancedTools } from './tools/scene-advanced-tools';
-import { AssetAdvancedTools } from './tools/asset-advanced-tools';
+import { SceneToolsV2 } from './tools/v2/scene-tools';
+import { NodeToolsV2 } from './tools/v2/node-tools';
+import { ComponentToolsV2 } from './tools/v2/component-tools';
+import { PrefabToolsV2 } from './tools/v2/prefab-tools';
+import { AssetToolsV2 } from './tools/v2/asset-tools';
+import { DebugToolsV2 } from './tools/v2/debug-tools';
+import { ProjectToolsV2 } from './tools/v2/project-tools';
+import { PreferencesToolsV2 } from './tools/v2/preferences-tools';
+import { UndoToolsV2 } from './tools/v2/undo-tools';
+import { SceneScriptToolsV2 } from './tools/v2/scene-script-tools';
+import { ArrayPropertyToolsV2 } from './tools/v2/array-property-tools';
 
 export class MCPServer {
     private settings: MCPServerSettings;
@@ -27,19 +29,21 @@ export class MCPServer {
 
     private initializeTools(): void {
         try {
-            console.log('[MCPServer] Initializing tools...');
-            this.tools.scene = new SceneTools();
-            this.tools.node = new NodeTools();
-            this.tools.component = new ComponentTools();
-            this.tools.prefab = new PrefabTools();
-            this.tools.project = new ProjectTools();
-            this.tools.debug = new DebugTools();
-            this.tools.preferences = new PreferencesTools();
-            this.tools.sceneAdvanced = new SceneAdvancedTools();
-            this.tools.assetAdvanced = new AssetAdvancedTools();
-            console.log('[MCPServer] Tools initialized successfully');
+            console.log('[MCPServer] Initializing v2 tools...');
+            this.tools.scene = new SceneToolsV2();
+            this.tools.node = new NodeToolsV2();
+            this.tools.component = new ComponentToolsV2();
+            this.tools.prefab = new PrefabToolsV2();
+            this.tools.asset = new AssetToolsV2();
+            this.tools.debug = new DebugToolsV2();
+            this.tools.project = new ProjectToolsV2();
+            this.tools.preferences = new PreferencesToolsV2();
+            this.tools.undo = new UndoToolsV2();
+            this.tools.sceneScript = new SceneScriptToolsV2();
+            this.tools.array = new ArrayPropertyToolsV2();
+            console.log('[MCPServer] V2 tools initialized successfully');
         } catch (error) {
-            console.error('[MCPServer] Error initializing tools:', error);
+            console.error('[MCPServer] Error initializing v2 tools:', error);
             throw error;
         }
     }

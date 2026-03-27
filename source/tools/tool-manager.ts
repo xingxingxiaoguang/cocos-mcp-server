@@ -79,33 +79,33 @@ export class ToolManager {
     }
 
     private initializeAvailableTools(): void {
-        // 从MCP服务器获取真实的工具列表
         try {
-            // 导入所有工具类
-            const { SceneTools } = require('./scene-tools');
-            const { NodeTools } = require('./node-tools');
-            const { ComponentTools } = require('./component-tools');
-            const { PrefabTools } = require('./prefab-tools');
-            const { ProjectTools } = require('./project-tools');
-            const { DebugTools } = require('./debug-tools');
-            const { PreferencesTools } = require('./preferences-tools');
-            const { SceneAdvancedTools } = require('./scene-advanced-tools');
-            const { AssetAdvancedTools } = require('./asset-advanced-tools');
+            const { SceneToolsV2 } = require('./v2/scene-tools');
+            const { NodeToolsV2 } = require('./v2/node-tools');
+            const { ComponentToolsV2 } = require('./v2/component-tools');
+            const { PrefabToolsV2 } = require('./v2/prefab-tools');
+            const { AssetToolsV2 } = require('./v2/asset-tools');
+            const { DebugToolsV2 } = require('./v2/debug-tools');
+            const { ProjectToolsV2 } = require('./v2/project-tools');
+            const { PreferencesToolsV2 } = require('./v2/preferences-tools');
+            const { UndoToolsV2 } = require('./v2/undo-tools');
+            const { SceneScriptToolsV2 } = require('./v2/scene-script-tools');
+            const { ArrayPropertyToolsV2 } = require('./v2/array-property-tools');
 
-            // 初始化工具实例
             const tools = {
-                scene: new SceneTools(),
-                node: new NodeTools(),
-                component: new ComponentTools(),
-                prefab: new PrefabTools(),
-                project: new ProjectTools(),
-                debug: new DebugTools(),
-                preferences: new PreferencesTools(),
-                sceneAdvanced: new SceneAdvancedTools(),
-                assetAdvanced: new AssetAdvancedTools()
+                scene: new SceneToolsV2(),
+                node: new NodeToolsV2(),
+                component: new ComponentToolsV2(),
+                prefab: new PrefabToolsV2(),
+                asset: new AssetToolsV2(),
+                debug: new DebugToolsV2(),
+                project: new ProjectToolsV2(),
+                preferences: new PreferencesToolsV2(),
+                undo: new UndoToolsV2(),
+                sceneScript: new SceneScriptToolsV2(),
+                array: new ArrayPropertyToolsV2()
             };
 
-            // 从每个工具类获取工具列表
             this.availableTools = [];
             for (const [category, toolSet] of Object.entries(tools)) {
                 const toolDefinitions = toolSet.getTools();
@@ -113,76 +113,73 @@ export class ToolManager {
                     this.availableTools.push({
                         category: category,
                         name: tool.name,
-                        enabled: true, // 默认启用
+                        enabled: true,
                         description: tool.description
                     });
                 });
             }
 
-            console.log(`[ToolManager] Initialized ${this.availableTools.length} tools from MCP server`);
+            console.log(`[ToolManager] Initialized ${this.availableTools.length} v2 tools from MCP server`);
         } catch (error) {
-            console.error('[ToolManager] Failed to initialize tools from MCP server:', error);
-            // 如果获取失败，使用默认工具列表作为后备
+            console.error('[ToolManager] Failed to initialize v2 tools from MCP server:', error);
             this.initializeDefaultTools();
         }
     }
 
     private initializeDefaultTools(): void {
-        // 默认工具列表作为后备方案
         const toolCategories = [
-            { category: 'scene', name: '场景工具', tools: [
-                { name: 'getCurrentSceneInfo', description: '获取当前场景信息' },
-                { name: 'getSceneHierarchy', description: '获取场景层级结构' },
-                { name: 'createNewScene', description: '创建新场景' },
-                { name: 'saveScene', description: '保存场景' },
-                { name: 'loadScene', description: '加载场景' }
+            { category: 'scene', tools: [
+                { name: 'query', description: '查询场景信息和层级结构' },
+                { name: 'open', description: '打开/加载场景' },
+                { name: 'save', description: '保存场景' },
+                { name: 'create', description: '创建新场景' },
+                { name: 'manage', description: '场景管理操作' }
             ]},
-            { category: 'node', name: '节点工具', tools: [
-                { name: 'getAllNodes', description: '获取所有节点' },
-                { name: 'findNodeByName', description: '根据名称查找节点' },
-                { name: 'createNode', description: '创建节点' },
-                { name: 'deleteNode', description: '删除节点' },
-                { name: 'setNodeProperty', description: '设置节点属性' },
-                { name: 'getNodeInfo', description: '获取节点信息' }
+            { category: 'node', tools: [
+                { name: 'query', description: '查询节点信息' },
+                { name: 'create', description: '创建节点' },
+                { name: 'modify', description: '修改节点属性' },
+                { name: 'delete', description: '删除节点' },
+                { name: 'arrange', description: '排列节点' }
             ]},
-            { category: 'component', name: '组件工具', tools: [
-                { name: 'addComponentToNode', description: '添加组件到节点' },
-                { name: 'removeComponentFromNode', description: '从节点移除组件' },
-                { name: 'setComponentProperty', description: '设置组件属性' },
-                { name: 'getComponentInfo', description: '获取组件信息' }
+            { category: 'component', tools: [
+                { name: 'query', description: '查询组件信息' },
+                { name: 'add', description: '添加组件' },
+                { name: 'modify', description: '修改组件属性' }
             ]},
-            { category: 'prefab', name: '预制体工具', tools: [
-                { name: 'createPrefabFromNode', description: '从节点创建预制体' },
-                { name: 'instantiatePrefab', description: '实例化预制体' },
-                { name: 'getPrefabInfo', description: '获取预制体信息' },
-                { name: 'savePrefab', description: '保存预制体' }
+            { category: 'prefab', tools: [
+                { name: 'query', description: '查询预制体信息' },
+                { name: 'create', description: '创建预制体' },
+                { name: 'update', description: '更新预制体' }
             ]},
-            { category: 'project', name: '项目工具', tools: [
-                { name: 'getProjectInfo', description: '获取项目信息' },
-                { name: 'getAssetList', description: '获取资源列表' },
-                { name: 'createAsset', description: '创建资源' },
-                { name: 'deleteAsset', description: '删除资源' }
+            { category: 'asset', tools: [
+                { name: 'query', description: '查询资源信息' },
+                { name: 'create', description: '创建/导入资源' },
+                { name: 'modify', description: '修改资源' },
+                { name: 'delete', description: '删除资源' },
+                { name: 'refresh', description: '资源辅助操作' }
             ]},
-            { category: 'debug', name: '调试工具', tools: [
-                { name: 'getConsoleLogs', description: '获取控制台日志' },
-                { name: 'getPerformanceStats', description: '获取性能统计' },
-                { name: 'validateScene', description: '验证场景' },
-                { name: 'getErrorLogs', description: '获取错误日志' }
+            { category: 'debug', tools: [
+                { name: 'logs', description: '日志查询' },
+                { name: 'execute', description: '执行脚本' },
+                { name: 'inspect', description: '检查工具' }
             ]},
-            { category: 'preferences', name: '偏好设置工具', tools: [
-                { name: 'getPreferences', description: '获取偏好设置' },
-                { name: 'setPreferences', description: '设置偏好设置' },
-                { name: 'resetPreferences', description: '重置偏好设置' }
+            { category: 'project', tools: [
+                { name: 'query', description: '项目查询' },
+                { name: 'build', description: '项目构建' }
             ]},
-            { category: 'sceneAdvanced', name: '高级场景工具', tools: [
-                { name: 'optimizeScene', description: '优化场景' },
-                { name: 'analyzeScene', description: '分析场景' },
-                { name: 'batchOperation', description: '批量操作' }
+            { category: 'preferences', tools: [
+                { name: 'query', description: '偏好查询' },
+                { name: 'modify', description: '偏好修改' }
             ]},
-            { category: 'assetAdvanced', name: '高级资源工具', tools: [
-                { name: 'importAsset', description: '导入资源' },
-                { name: 'exportAsset', description: '导出资源' },
-                { name: 'processAsset', description: '处理资源' }
+            { category: 'undo', tools: [
+                { name: 'recording', description: 'Undo 录制操作' }
+            ]},
+            { category: 'sceneScript', tools: [
+                { name: 'execute', description: '场景脚本执行' }
+            ]},
+            { category: 'array', tools: [
+                { name: 'property', description: '数组属性操作' }
             ]},
         ];
 
@@ -192,13 +189,13 @@ export class ToolManager {
                 this.availableTools.push({
                     category: category.category,
                     name: tool.name,
-                    enabled: true, // 默认启用
+                    enabled: true,
                     description: tool.description
                 });
             });
         });
 
-        console.log(`[ToolManager] Initialized ${this.availableTools.length} default tools`);
+        console.log(`[ToolManager] Initialized ${this.availableTools.length} default v2 tools`);
     }
 
     public getAvailableTools(): ToolConfig[] {

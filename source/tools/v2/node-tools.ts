@@ -1,8 +1,8 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, NodeInfo } from '../../types';
-import { ComponentTools } from '../component-tools';
+import { ComponentToolsV2 } from './component-tools';
 
 export class NodeToolsV2 implements ToolExecutor {
-    private componentTools = new ComponentTools();
+    private componentTools = new ComponentToolsV2();
 
     getTools(): ToolDefinition[] {
         return [
@@ -500,8 +500,8 @@ export class NodeToolsV2 implements ToolExecutor {
                         await new Promise(resolve => setTimeout(resolve, 100));
                         for (const componentType of args.components) {
                             try {
-                                const result = await this.componentTools.execute('add_component', {
-                                    nodeUuid: uuid,
+                                const result = await this.componentTools.execute('add', {
+                                    uuid: uuid,
                                     componentType: componentType
                                 });
                                 if (!result.success) {
