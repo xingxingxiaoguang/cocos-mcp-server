@@ -89,13 +89,8 @@ export class ToolManager {
             const { ProjectTools } = require('./project-tools');
             const { DebugTools } = require('./debug-tools');
             const { PreferencesTools } = require('./preferences-tools');
-            const { ServerTools } = require('./server-tools');
-            const { BroadcastTools } = require('./broadcast-tools');
             const { SceneAdvancedTools } = require('./scene-advanced-tools');
-            const { SceneViewTools } = require('./scene-view-tools');
-            const { ReferenceImageTools } = require('./reference-image-tools');
             const { AssetAdvancedTools } = require('./asset-advanced-tools');
-            const { ValidationTools } = require('./validation-tools');
 
             // 初始化工具实例
             const tools = {
@@ -106,13 +101,8 @@ export class ToolManager {
                 project: new ProjectTools(),
                 debug: new DebugTools(),
                 preferences: new PreferencesTools(),
-                server: new ServerTools(),
-                broadcast: new BroadcastTools(),
                 sceneAdvanced: new SceneAdvancedTools(),
-                sceneView: new SceneViewTools(),
-                referenceImage: new ReferenceImageTools(),
-                assetAdvanced: new AssetAdvancedTools(),
-                validation: new ValidationTools()
+                assetAdvanced: new AssetAdvancedTools()
             };
 
             // 从每个工具类获取工具列表
@@ -184,40 +174,16 @@ export class ToolManager {
                 { name: 'setPreferences', description: '设置偏好设置' },
                 { name: 'resetPreferences', description: '重置偏好设置' }
             ]},
-            { category: 'server', name: '服务器工具', tools: [
-                { name: 'getServerStatus', description: '获取服务器状态' },
-                { name: 'getConnectedClients', description: '获取连接的客户端' },
-                { name: 'getServerLogs', description: '获取服务器日志' }
-            ]},
-            { category: 'broadcast', name: '广播工具', tools: [
-                { name: 'broadcastMessage', description: '广播消息' },
-                { name: 'getBroadcastHistory', description: '获取广播历史' }
-            ]},
             { category: 'sceneAdvanced', name: '高级场景工具', tools: [
                 { name: 'optimizeScene', description: '优化场景' },
                 { name: 'analyzeScene', description: '分析场景' },
                 { name: 'batchOperation', description: '批量操作' }
-            ]},
-            { category: 'sceneView', name: '场景视图工具', tools: [
-                { name: 'getViewportInfo', description: '获取视口信息' },
-                { name: 'setViewportCamera', description: '设置视口相机' },
-                { name: 'focusOnNode', description: '聚焦到节点' }
-            ]},
-            { category: 'referenceImage', name: '参考图片工具', tools: [
-                { name: 'addReferenceImage', description: '添加参考图片' },
-                { name: 'removeReferenceImage', description: '移除参考图片' },
-                { name: 'getReferenceImages', description: '获取参考图片列表' }
             ]},
             { category: 'assetAdvanced', name: '高级资源工具', tools: [
                 { name: 'importAsset', description: '导入资源' },
                 { name: 'exportAsset', description: '导出资源' },
                 { name: 'processAsset', description: '处理资源' }
             ]},
-            { category: 'validation', name: '验证工具', tools: [
-                { name: 'validateProject', description: '验证项目' },
-                { name: 'validateAssets', description: '验证资源' },
-                { name: 'generateReport', description: '生成报告' }
-            ]}
         ];
 
         this.availableTools = [];
