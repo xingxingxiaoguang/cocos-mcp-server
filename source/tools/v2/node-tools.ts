@@ -1,6 +1,28 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, NodeInfo } from '../../types';
 import { ComponentToolsV2 } from './component-tools';
 
+interface NodeComponentSpec {
+    type: string;
+    properties?: Record<string, any>;
+}
+
+interface NodeCreateSpec {
+    name: string;
+    parentUuid?: string;
+    nodeType?: 'Node' | '2DNode' | '3DNode' | string;
+    siblingIndex?: number;
+    assetUuid?: string;
+    assetPath?: string;
+    components?: Array<string | NodeComponentSpec>;
+    unlinkPrefab?: boolean;
+    keepWorldTransform?: boolean;
+    initialTransform?: {
+        position?: { x: number; y: number; z: number };
+        rotation?: { x: number; y: number; z: number };
+        scale?: { x: number; y: number; z: number };
+    };
+}
+
 export class NodeToolsV2 implements ToolExecutor {
     private componentTools = new ComponentToolsV2();
     private cidNameMap: Map<string, string> | null = null;
@@ -63,8 +85,26 @@ export class NodeToolsV2 implements ToolExecutor {
                         },
                         components: {
                             type: 'array',
-                            items: { type: 'string' },
-                            description: 'Component type names to add (e.g., ["cc.Sprite", "cc.Button"])'
+                            items: {
+                                oneOf: [
+                                    { type: 'string', description: 'Component type name (e.g., "cc.Sprite")' },
+                                    {
+                                        type: 'object',
+                                        properties: {
+                                            type: {
+                                                type: 'string',
+                                                description: 'Component type name (e.g., "cc.Sprite" or a script path)'
+                                            },
+                                            properties: {
+                                                type: 'object',
+                                                description: 'Inline property values to apply after the component is added'
+                                            }
+                                        },
+                                        required: ['type']
+                                    }
+                                ]
+                            },
+                            description: 'Component type names or inline component specs. Object specs support immediate property initialization.'
                         },
                         unlinkPrefab: {
                             type: 'boolean',
@@ -108,6 +148,123 @@ export class NodeToolsV2 implements ToolExecutor {
                         }
                     },
                     required: ['name']
+                }
+            },
+            {
+                name: 'batch_create',
+                description: 'Create multiple nodes in one call. Each node supports the same inline component property syntax as node_create.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        parentUuid: {
+                            type: 'string',
+                            description: 'Default parent node UUID for created nodes'
+                        },
+                        nodes: {
+                            type: 'array',
+                            description: 'Array of node specs to create',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    name: {
+                                        type: 'string',
+                                        description: 'Node name'
+                                    },
+                                    parentUuid: {
+                                        type: 'string',
+                                        description: 'Optional per-node parent UUID override'
+                                    },
+                                    nodeType: {
+                                        type: 'string',
+                                        enum: ['Node', '2DNode', '3DNode'],
+                                        description: 'Node type',
+                                        default: 'Node'
+                                    },
+                                    siblingIndex: {
+                                        type: 'number',
+                                        description: 'Sibling index for ordering (-1 means append at end)',
+                                        default: -1
+                                    },
+                                    assetUuid: {
+                                        type: 'string',
+                                        description: 'Asset UUID to instantiate from (e.g., prefab UUID)'
+                                    },
+                                    assetPath: {
+                                        type: 'string',
+                                        description: 'Asset path to instantiate from (e.g., db://assets/prefabs/MyPrefab.prefab)'
+                                    },
+                                    components: {
+                                        oneOf: [
+                                            {
+                                                type: 'array',
+                                                items: {
+                                                    oneOf: [
+                                                        { type: 'string' },
+                                                        {
+                                                            type: 'object',
+                                                            properties: {
+                                                                type: { type: 'string' },
+                                                                properties: { type: 'object' }
+                                                            },
+                                                            required: ['type']
+                                                        }
+                                                    ]
+                                                },
+                                                description: 'Component specs for this node'
+                                            },
+                                            {
+                                                type: 'string',
+                                                enum: ['same_as_previous'],
+                                                description: 'Reuse the previous node component specs'
+                                            }
+                                        ]
+                                    },
+                                    unlinkPrefab: {
+                                        type: 'boolean',
+                                        description: 'If true and creating from prefab, unlink to create a regular node',
+                                        default: false
+                                    },
+                                    keepWorldTransform: {
+                                        type: 'boolean',
+                                        description: 'Whether to keep world transform when creating the node',
+                                        default: false
+                                    },
+                                    initialTransform: {
+                                        type: 'object',
+                                        properties: {
+                                            position: {
+                                                type: 'object',
+                                                properties: {
+                                                    x: { type: 'number' },
+                                                    y: { type: 'number' },
+                                                    z: { type: 'number' }
+                                                }
+                                            },
+                                            rotation: {
+                                                type: 'object',
+                                                properties: {
+                                                    x: { type: 'number' },
+                                                    y: { type: 'number' },
+                                                    z: { type: 'number' }
+                                                }
+                                            },
+                                            scale: {
+                                                type: 'object',
+                                                properties: {
+                                                    x: { type: 'number' },
+                                                    y: { type: 'number' },
+                                                    z: { type: 'number' }
+                                                }
+                                            }
+                                        },
+                                        description: 'Initial transform to apply to the created node'
+                                    }
+                                },
+                                required: ['name']
+                            }
+                        }
+                    },
+                    required: ['nodes']
                 }
             },
             {
@@ -233,6 +390,8 @@ export class NodeToolsV2 implements ToolExecutor {
                 return await this.query(args);
             case 'create':
                 return await this.createNode(args);
+            case 'batch_create':
+                return await this.batchCreateNodes(args);
             case 'modify':
                 return await this.modify(args);
             case 'delete':
@@ -498,6 +657,154 @@ export class NodeToolsV2 implements ToolExecutor {
 
     // ---- node_create ----
     private async createNode(args: any): Promise<ToolResponse> {
+        return await this.createNodeFromSpec(args);
+    }
+
+    private async batchCreateNodes(args: any): Promise<ToolResponse> {
+        const nodeSpecs = Array.isArray(args.nodes) ? args.nodes : [];
+        if (nodeSpecs.length === 0) {
+            return { success: false, error: 'nodes must be a non-empty array' };
+        }
+
+        const results: any[] = [];
+        const failures: any[] = [];
+        let previousComponentSpecs: Array<string | NodeComponentSpec> | null = null;
+
+        for (let index = 0; index < nodeSpecs.length; index++) {
+            const normalizedSpec = this.normalizeNodeCreateSpec(nodeSpecs[index], args.parentUuid, previousComponentSpecs);
+            if (!normalizedSpec.success || !normalizedSpec.data) {
+                const failure = {
+                    index,
+                    name: nodeSpecs[index]?.name || `Node_${index}`,
+                    success: false,
+                    error: 'error' in normalizedSpec ? normalizedSpec.error : 'Failed to normalize node spec'
+                };
+                results.push(failure);
+                failures.push(failure);
+                continue;
+            }
+
+            const createResult = await this.createNodeFromSpec(normalizedSpec.data);
+            results.push({
+                index,
+                name: normalizedSpec.data.name,
+                success: createResult.success,
+                uuid: createResult.data?.uuid,
+                warning: createResult.warning,
+                error: createResult.error,
+                data: createResult.data
+            });
+
+            if (createResult.success) {
+                previousComponentSpecs = normalizedSpec.data.components || previousComponentSpecs;
+            } else {
+                failures.push(createResult);
+            }
+        }
+
+        if (failures.length > 0) {
+            return {
+                success: false,
+                error: `Batch node creation completed with ${failures.length} failure(s)`,
+                data: { results, failures }
+            };
+        }
+
+        return {
+            success: true,
+            message: `Batch created ${results.length} node(s) successfully`,
+            data: { results }
+        };
+    }
+
+    private normalizeNodeCreateSpec(
+        rawSpec: any,
+        defaultParentUuid?: string,
+        previousComponentSpecs: Array<string | NodeComponentSpec> | null = null
+    ): { success: true; data: NodeCreateSpec } | ToolResponse {
+        if (!rawSpec || typeof rawSpec !== 'object') {
+            return { success: false, error: 'Node spec must be an object' };
+        }
+
+        if (typeof rawSpec.name !== 'string' || !rawSpec.name.trim()) {
+            return { success: false, error: 'Node spec must include a non-empty string name' };
+        }
+
+        const normalizedComponents = this.normalizeNodeComponents(rawSpec.components, previousComponentSpecs);
+        if (!normalizedComponents.success) {
+            return normalizedComponents;
+        }
+
+        return {
+            success: true,
+            data: {
+                name: rawSpec.name,
+                parentUuid: rawSpec.parentUuid || defaultParentUuid,
+                nodeType: rawSpec.nodeType || 'Node',
+                siblingIndex: rawSpec.siblingIndex,
+                assetUuid: rawSpec.assetUuid,
+                assetPath: rawSpec.assetPath,
+                components: normalizedComponents.data,
+                unlinkPrefab: rawSpec.unlinkPrefab,
+                keepWorldTransform: rawSpec.keepWorldTransform,
+                initialTransform: rawSpec.initialTransform
+            }
+        };
+    }
+
+    private normalizeNodeComponents(
+        rawComponents: any,
+        previousComponentSpecs: Array<string | NodeComponentSpec> | null = null
+    ): { success: true; data: Array<string | NodeComponentSpec> } | ToolResponse {
+        if (rawComponents === undefined || rawComponents === null) {
+            return { success: true, data: [] };
+        }
+
+        if (rawComponents === 'same_as_previous') {
+            if (!previousComponentSpecs || previousComponentSpecs.length === 0) {
+                return { success: false, error: 'components = "same_as_previous" requires a previous node with component specs' };
+            }
+            return { success: true, data: previousComponentSpecs.map((spec) => this.cloneComponentSpec(spec)) };
+        }
+
+        if (!Array.isArray(rawComponents)) {
+            return { success: false, error: 'components must be an array or "same_as_previous"' };
+        }
+
+        const normalized: Array<string | NodeComponentSpec> = [];
+        for (const component of rawComponents) {
+            if (typeof component === 'string') {
+                normalized.push(component);
+                continue;
+            }
+
+            if (!component || typeof component !== 'object' || typeof component.type !== 'string' || !component.type) {
+                return { success: false, error: 'Each component spec must be a string or an object with a type field' };
+            }
+
+            normalized.push({
+                type: component.type,
+                properties: component.properties && typeof component.properties === 'object'
+                    ? { ...component.properties }
+                    : undefined
+            });
+        }
+
+        return { success: true, data: normalized };
+    }
+
+    private cloneComponentSpec(spec: string | NodeComponentSpec): string | NodeComponentSpec {
+        if (typeof spec === 'string') {
+            return spec;
+        }
+
+        return {
+            type: spec.type,
+            properties: spec.properties ? { ...spec.properties } : undefined
+        };
+    }
+
+    private async createNodeFromSpec(args: NodeCreateSpec): Promise<ToolResponse> {
         return new Promise(async (resolve) => {
             try {
                 let targetParentUuid = args.parentUuid;
@@ -507,8 +814,8 @@ export class NodeToolsV2 implements ToolExecutor {
                         const sceneInfo = await Editor.Message.request('scene', 'query-node-tree');
                         if (sceneInfo && typeof sceneInfo === 'object' && !Array.isArray(sceneInfo) && Object.prototype.hasOwnProperty.call(sceneInfo, 'uuid')) {
                             targetParentUuid = (sceneInfo as any).uuid;
-                        } else if (Array.isArray(sceneInfo) && sceneInfo.length > 0 && sceneInfo[0].uuid) {
-                            targetParentUuid = sceneInfo[0].uuid;
+                        } else if (Array.isArray(sceneInfo) && sceneInfo.length > 0 && (sceneInfo[0] as any).uuid) {
+                            targetParentUuid = (sceneInfo[0] as any).uuid;
                         } else {
                             const currentScene = await Editor.Message.request('scene', 'query-current-scene');
                             if (currentScene && currentScene.uuid) {
@@ -536,6 +843,7 @@ export class NodeToolsV2 implements ToolExecutor {
                     }
                 }
 
+                const normalizedComponents = Array.isArray(args.components) ? args.components : [];
                 const createNodeOptions: any = { name: args.name };
 
                 if (targetParentUuid) {
@@ -549,8 +857,12 @@ export class NodeToolsV2 implements ToolExecutor {
                     }
                 }
 
-                if (args.components && args.components.length > 0) {
-                    createNodeOptions.components = args.components;
+                const componentTypes = normalizedComponents.map((component) =>
+                    typeof component === 'string' ? component : component.type
+                );
+
+                if (componentTypes.length > 0) {
+                    createNodeOptions.components = componentTypes;
                 } else if (args.nodeType && args.nodeType !== 'Node' && !finalAssetUuid) {
                     createNodeOptions.components = [args.nodeType];
                 }
@@ -575,10 +887,16 @@ export class NodeToolsV2 implements ToolExecutor {
                     }
                 }
 
-                if (args.components && args.components.length > 0 && uuid) {
+                const defaultSpriteFrameUuid = componentTypes.some((componentType) => this.normalizeComponentType(componentType) === 'cc.Sprite')
+                    ? await this.resolveDefaultSpriteFrameUuid()
+                    : null;
+
+                if (componentTypes.length > 0 && uuid) {
                     try {
                         await new Promise(resolve => setTimeout(resolve, 100));
-                        for (const componentType of args.components) {
+                        for (let index = 0; index < normalizedComponents.length; index++) {
+                            const componentSpec = normalizedComponents[index];
+                            const componentType = typeof componentSpec === 'string' ? componentSpec : componentSpec.type;
                             try {
                                 const result = await this.componentTools.execute('add', {
                                     uuid: uuid,
@@ -587,20 +905,35 @@ export class NodeToolsV2 implements ToolExecutor {
                                 if (!result.success) {
                                     console.warn(`Failed to add component ${componentType}:`, result.error);
                                 }
+
+                                if (typeof componentSpec === 'object' && componentSpec.properties && Object.keys(componentSpec.properties).length > 0) {
+                                    const actualComponentType = this.resolveAddedComponentType(componentType, result);
+                                    const propertyBatch = this.buildInlineComponentPropertyBatch(
+                                        componentType,
+                                        actualComponentType,
+                                        componentSpec.properties,
+                                        defaultSpriteFrameUuid
+                                    );
+                                    if (Object.keys(propertyBatch).length > 0) {
+                                        const batchResult = await this.componentTools.execute('batch_set', {
+                                            uuid,
+                                            batch: [{
+                                                componentType: actualComponentType,
+                                                properties: propertyBatch
+                                            }],
+                                            continueOnError: true
+                                        });
+                                        if (!batchResult.success) {
+                                            console.warn(`Failed to initialize component ${actualComponentType}:`, batchResult.error);
+                                        }
+                                    }
+                                }
                             } catch (err) {
                                 console.warn(`Failed to add component ${componentType}:`, err);
                             }
                         }
                     } catch (err) {
                         console.warn('Failed to add components:', err);
-                    }
-                }
-
-                if (uuid && Array.isArray(args.components) && args.components.some((componentType: string) => this.normalizeComponentType(componentType) === 'cc.Sprite')) {
-                    try {
-                        await this.ensureDefaultSpriteComponentState(uuid);
-                    } catch (err) {
-                        console.warn('Failed to apply default Sprite state:', err);
                     }
                 }
 
@@ -652,6 +985,64 @@ export class NodeToolsV2 implements ToolExecutor {
                 });
             }
         });
+    }
+
+    private resolveAddedComponentType(requestedType: string, result: ToolResponse): string {
+        const candidate = result?.data?.componentType || result?.data?.componentName || result?.data?.type;
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate;
+        }
+
+        return requestedType;
+    }
+
+    private buildInlineComponentPropertyBatch(
+        requestedType: string,
+        actualType: string,
+        properties: Record<string, any>,
+        defaultSpriteFrameUuid: string | null
+    ): Record<string, any> {
+        const batch: Record<string, any> = {};
+        const isSprite = this.normalizeComponentType(actualType || requestedType) === 'cc.Sprite';
+
+        for (const [property, rawEntry] of Object.entries(properties)) {
+            batch[property] = this.normalizeInlinePropertyEntry(property, rawEntry, defaultSpriteFrameUuid);
+        }
+
+        if (isSprite) {
+            const hasSpriteFrame = Object.prototype.hasOwnProperty.call(batch, 'spriteFrame');
+            const hasSizeMode = Object.prototype.hasOwnProperty.call(batch, 'sizeMode');
+
+            if (!hasSpriteFrame && defaultSpriteFrameUuid) {
+                batch.spriteFrame = { value: defaultSpriteFrameUuid, propertyType: 'spriteFrame' };
+            }
+
+            if (!hasSizeMode) {
+                batch.sizeMode = { value: 0, propertyType: 'integer' };
+            }
+        }
+
+        return batch;
+    }
+
+    private normalizeInlinePropertyEntry(property: string, rawEntry: any, defaultSpriteFrameUuid: string | null): any {
+        if (rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry) && Object.prototype.hasOwnProperty.call(rawEntry, 'propertyType')) {
+            const cloned = { ...rawEntry };
+            if (property === 'spriteFrame') {
+                const entryValue = Object.prototype.hasOwnProperty.call(cloned, 'value') ? cloned.value : undefined;
+                if (entryValue === 'auto' && defaultSpriteFrameUuid) {
+                    cloned.value = defaultSpriteFrameUuid;
+                    cloned.propertyType = 'spriteFrame';
+                }
+            }
+            return cloned;
+        }
+
+        if (property === 'spriteFrame' && rawEntry === 'auto' && defaultSpriteFrameUuid) {
+            return { value: defaultSpriteFrameUuid, propertyType: 'spriteFrame' };
+        }
+
+        return rawEntry;
     }
 
     private async ensureDefaultSpriteComponentState(nodeUuid: string): Promise<void> {

@@ -159,7 +159,7 @@ export class ComponentToolsV2 implements ToolExecutor {
                             ]
                         },
                         value: {
-                            description: 'Property value for action=set. Format depends on propertyType: color={r,g,b,a}, vec2={x,y}, vec3={x,y,z}, size={width,height}, node/asset="uuid-string"'
+                            description: 'Property value for action=set. Format depends on propertyType: color={r,g,b,a}, vec2={x,y}, vec3={x,y,z}, size={width,height}, node/asset="uuid-string", component/cameraComponent="component-uuid-or-node-uuid"'
                         },
                         method: {
                             type: 'string',
@@ -1639,13 +1639,23 @@ export class ComponentToolsV2 implements ToolExecutor {
 
     private async resolveComponentReference(referenceUuid: string, expectedComponentType: string, cidMap: Map<string, string>): Promise<{ componentUuid: string; sourceNodeUuid: string; componentType: string } | null> {
         const expectedAliases = this.getComponentAliases(expectedComponentType, cidMap);
+        const isGenericComponentReference = this.isGenericComponentType(expectedComponentType);
 
         const matchesExpected = (component: any): boolean => {
+            if (isGenericComponentReference) {
+                return true;
+            }
+
             const rawType = component.__type__ || component.cid || component.type || 'Unknown';
             const resolved = this.resolveComponentType(rawType, cidMap);
             const rawTypeNormalized = this.normalizeComponentType(rawType);
             return expectedAliases.has(rawTypeNormalized) || expectedAliases.has(resolved.type);
         };
+
+        const directComponentMatch = await this.findComponentByUuid(referenceUuid, expectedComponentType, cidMap, matchesExpected);
+        if (directComponentMatch) {
+            return directComponentMatch;
+        }
 
         try {
             const targetNodeData = await Editor.Message.request('scene', 'query-node', referenceUuid);
@@ -1691,6 +1701,51 @@ export class ComponentToolsV2 implements ToolExecutor {
                     const resolved = this.resolveComponentType(rawType, cidMap);
                     return {
                         componentUuid,
+                        sourceNodeUuid: nodeUuid,
+                        componentType: resolved.type
+                    };
+                }
+            } catch {
+                // Continue scanning remaining nodes.
+            }
+        }
+
+        return null;
+    }
+
+    private isGenericComponentType(componentType: string): boolean {
+        const normalized = this.normalizeComponentType(componentType).toLowerCase();
+        return normalized === 'cc.component' || normalized === 'component' || normalized === 'cc.object';
+    }
+
+    private async findComponentByUuid(
+        componentUuid: string,
+        expectedComponentType: string,
+        cidMap: Map<string, string>,
+        matchesExpected: (component: any) => boolean
+    ): Promise<{ componentUuid: string; sourceNodeUuid: string; componentType: string } | null> {
+        const nodeUuids = await this.collectSceneNodeUuids();
+        for (const nodeUuid of nodeUuids) {
+            try {
+                const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+                if (!nodeData || !nodeData.__comps__) {
+                    continue;
+                }
+
+                for (const comp of nodeData.__comps__) {
+                    const currentComponentUuid = this.getComponentUuid(comp);
+                    if (!currentComponentUuid || currentComponentUuid !== componentUuid) {
+                        continue;
+                    }
+
+                    if (!matchesExpected(comp)) {
+                        return null;
+                    }
+
+                    const rawType = (comp as any).__type__ || (comp as any).cid || (comp as any).type || 'Unknown';
+                    const resolved = this.resolveComponentType(rawType, cidMap);
+                    return {
+                        componentUuid: currentComponentUuid,
                         sourceNodeUuid: nodeUuid,
                         componentType: resolved.type
                     };
