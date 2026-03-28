@@ -2,7 +2,7 @@
 
 module.exports = {
     "extension_name": "Cocos MCP Server",
-    "description": "AI MCP Server for Cocos Creator 3.8",
+    "description": "xxxg modified Cocos Creator MCP Server",
     "panel_title": "MCP Server",
     "open_panel": "Open MCP Panel",
     "start_server": "Start Server",
