@@ -80,7 +80,7 @@ export class DebugToolsV2 implements ToolExecutor {
             },
             {
                 name: 'execute',
-                description: 'Execute JavaScript code in scene context. Returns auto-serialized results. Engine objects (cc.Node, cc.Scene, etc.) are automatically converted to plain objects with common properties extracted. Use require("cc") to access engine APIs.',
+                description: 'Execute JavaScript code in scene context. Returns auto-serialized results. Engine objects (cc.Node, cc.Scene, etc.) are automatically converted to plain objects with common properties extracted. Runtime edits made here are not persisted by scene_save; use component_modify for durable scene changes. Use require("cc") to access engine APIs.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -351,7 +351,22 @@ export class DebugToolsV2 implements ToolExecutor {
                     resolve({ success: false, error: 'evalScript method not found. Ensure the plugin scene script is loaded.' });
                     return;
                 }
-                resolve(result);
+                if (result && typeof result === 'object' && 'success' in result) {
+                    const response = { ...result };
+                    if (response.success) {
+                        response.warning = response.warning
+                            ? `${response.warning}; Runtime edits made through debug_execute are not persisted by scene_save. Use component_modify for persistent changes.`
+                            : 'Runtime edits made through debug_execute are not persisted by scene_save. Use component_modify for persistent changes.';
+                    }
+                    resolve(response);
+                    return;
+                }
+
+                resolve({
+                    success: true,
+                    data: { result },
+                    warning: 'Runtime edits made through debug_execute are not persisted by scene_save. Use component_modify for persistent changes.'
+                });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
             });

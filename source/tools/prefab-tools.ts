@@ -33,7 +33,7 @@ export class PrefabTools implements ToolExecutor {
             },
             {
                 name: 'instantiate_prefab',
-                description: 'Instantiate a prefab in the scene',
+                description: 'Instantiate a prefab in the scene. Supports optional custom name override.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -44,6 +44,10 @@ export class PrefabTools implements ToolExecutor {
                         parentUuid: {
                             type: 'string',
                             description: 'Parent node UUID (optional)'
+                        },
+                        name: {
+                            type: 'string',
+                            description: 'Custom node name for the instantiated prefab. If omitted, the prefab asset name is used.'
                         },
                         position: {
                             type: 'object',
@@ -276,8 +280,8 @@ export class PrefabTools implements ToolExecutor {
                 }
 
                 // 设置节点名称
-                if (args.name) {
-                    createNodeOptions.name = args.name;
+                if (typeof args.name === 'string' && args.name.trim()) {
+                    createNodeOptions.name = args.name.trim();
                 } else if (assetInfo.name) {
                     createNodeOptions.name = assetInfo.name;
                 }

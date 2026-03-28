@@ -57,6 +57,10 @@ export class PrefabToolsV2 implements ToolExecutor {
                             type: 'string',
                             description: 'Parent node UUID (action=instantiate)'
                         },
+                        name: {
+                            type: 'string',
+                            description: 'Custom node name for the instantiated prefab (action=instantiate). If omitted, the prefab asset name is used.'
+                        },
                         position: {
                             type: 'object',
                             description: 'Initial position (action=instantiate)',
@@ -303,8 +307,10 @@ export class PrefabToolsV2 implements ToolExecutor {
                 if (parentUuid) {
                     createNodeOptions.parent = parentUuid;
                 }
-                if (args.name || assetInfo.name) {
-                    createNodeOptions.name = args.name || assetInfo.name;
+                if (typeof args.name === 'string' && args.name.trim()) {
+                    createNodeOptions.name = args.name.trim();
+                } else if (assetInfo.name) {
+                    createNodeOptions.name = assetInfo.name;
                 }
                 if (position) {
                     createNodeOptions.dump = {
