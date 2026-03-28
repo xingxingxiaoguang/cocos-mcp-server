@@ -1,6 +1,18 @@
 import { join } from 'path';
 module.paths.push(join(Editor.App.path, 'node_modules'));
 
+/**
+ * 递归按 UUID 查找节点（修复缺陷2：getChildByUuid 只搜索顶层子节点）
+ */
+function findNodeByUuid(root: any, uuid: string): any {
+    if (root.uuid === uuid) return root;
+    for (const child of root.children) {
+        const found = findNodeByUuid(child, uuid);
+        if (found) return found;
+    }
+    return null;
+}
+
 export const methods: { [key: string]: (...any: any) => any } = {
     /**
      * Create a new scene
@@ -28,24 +40,26 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return { success: false, error: 'No active scene' };
             }
 
-            // Find node by UUID
-            const node = scene.getChildByUuid(nodeUuid);
+            // 递归查找节点（修复缺陷2）
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
 
-            // Get component class
-            const ComponentClass = js.getClassByName(componentType);
-            if (!ComponentClass) {
-                return { success: false, error: `Component type ${componentType} not found` };
+            // 优先尝试 js 注册表（自定义脚本）（修复缺陷1）
+            const Cls = js.getClassByName(componentType);
+            if (Cls) {
+                const comp = node.addComponent(Cls);
+                return {
+                    success: true,
+                    message: `Component ${componentType} added successfully`,
+                    data: { componentId: comp.uuid }
+                };
             }
 
-            // Add component
-            const component = node.addComponent(ComponentClass);
-            return { 
-                success: true, 
-                message: `Component ${componentType} added successfully`,
-                data: { componentId: component.uuid }
+            return {
+                success: false,
+                error: `Script class '${componentType}' is not registered in scene process. The script may still be compiling — retry in 1-2 seconds.`
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -63,7 +77,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return { success: false, error: 'No active scene' };
             }
 
-            const node = scene.getChildByUuid(nodeUuid);
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
@@ -99,7 +113,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
             const node = new Node(name);
             
             if (parentUuid) {
-                const parent = scene.getChildByUuid(parentUuid);
+                const parent = findNodeByUuid(scene, parentUuid);
                 if (parent) {
                     parent.addChild(node);
                 } else {
@@ -130,7 +144,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return { success: false, error: 'No active scene' };
             }
 
-            const node = scene.getChildByUuid(nodeUuid);
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
@@ -253,7 +267,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return { success: false, error: 'No active scene' };
             }
 
-            const node = scene.getChildByUuid(nodeUuid);
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
@@ -334,7 +348,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return { success: false, error: 'No active scene' };
             }
 
-            const node = scene.getChildByUuid(nodeUuid);
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
@@ -364,7 +378,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
             if (!scene) {
                 return { success: false, error: 'No active scene' };
             }
-            const node = scene.getChildByUuid(nodeUuid);
+            const node = findNodeByUuid(scene, nodeUuid);
             if (!node) {
                 return { success: false, error: `Node with UUID ${nodeUuid} not found` };
             }
@@ -428,6 +442,90 @@ export const methods: { [key: string]: (...any: any) => any } = {
             // 可选：刷新 Inspector
             // Editor.Message.send('scene', 'snapshot');
             return { success: true, message: `Component property '${property}' updated successfully` };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    },
+
+    /**
+     * 执行任意脚本（修复缺陷3：debug_execute 依赖不存在的内置场景脚本）
+     */
+    evalScript(script: string) {
+        try {
+            const result = new Function('require', 'return ' + script)(require);
+            return { success: true, data: { result } };
+        } catch (e: any) {
+            // 尝试作为语句执行
+            try {
+                new Function('require', script)(require);
+                return { success: true, data: { result: undefined } };
+            } catch (e2: any) {
+                return { success: false, error: e2.message };
+            }
+        }
+    },
+
+    /**
+     * 获取场景性能统计数据（节点数、组件数等）
+     */
+    getPerformanceStats() {
+        try {
+            const { director } = require('cc');
+            const scene = director.getScene();
+            if (!scene) {
+                return { success: false, error: 'No active scene' };
+            }
+
+            let nodeCount = 0;
+            let componentCount = 0;
+            let activeNodeCount = 0;
+
+            const traverse = (node: any) => {
+                nodeCount++;
+                if (node.active) activeNodeCount++;
+                componentCount += node.components ? node.components.length : 0;
+                for (const child of node.children) {
+                    traverse(child);
+                }
+            };
+
+            for (const child of scene.children) {
+                traverse(child);
+            }
+
+            return {
+                success: true,
+                data: {
+                    nodeCount,
+                    activeNodeCount,
+                    componentCount,
+                    drawCalls: null,
+                    triangles: null,
+                    memory: process.memoryUsage ? process.memoryUsage() : null,
+                    note: 'drawCalls and triangles are only available at runtime (preview/build)'
+                }
+            };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    },
+
+    /**
+     * 获取场景进程中已注册的类（修复缺陷5：component_query classes 跨进程隔离）
+     */
+    getRegisteredClasses(extendsFilter?: string) {
+        try {
+            const { js } = require('cc');
+            const FilterClass = extendsFilter ? js.getClassByName(extendsFilter) : null;
+            const allClasses: string[] = [];
+            const classMap = (js as any)._nameToClass || {};
+            for (const name of Object.keys(classMap)) {
+                const cls = classMap[name];
+                if (!FilterClass || (cls.prototype instanceof FilterClass)) {
+                    allClasses.push(name);
+                }
+            }
+            return { success: true, data: { classes: allClasses, count: allClasses.length } };
         } catch (error: any) {
             return { success: false, error: error.message };
         }

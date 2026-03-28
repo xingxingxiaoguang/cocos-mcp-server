@@ -59,6 +59,13 @@ export class SceneScriptToolsV2 implements ToolExecutor {
                 method,
                 args
             }).then((result: any) => {
+                if (result === undefined || result === null) {
+                    resolve({
+                        success: false,
+                        error: `Method '${method}' not found or returned nothing. Check that it is registered in package.json contributions.scene.methods.`
+                    });
+                    return;
+                }
                 resolve({ success: true, data: result });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });

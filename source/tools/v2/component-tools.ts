@@ -305,14 +305,19 @@ export class ComponentToolsV2 implements ToolExecutor {
     // Methods migrated from SceneAdvancedTools
     private async querySceneClasses(extendsClass?: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            const options: any = {};
-            if (extendsClass) {
-                options.extends = extendsClass;
-            }
-            Editor.Message.request('scene', 'query-classes', options).then((classes: any[]) => {
+            // 委托给场景进程执行（修复缺陷5：主进程无法访问场景进程注册的类）
+            Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'cocos-mcp-server',
+                method: 'getRegisteredClasses',
+                args: [extendsClass]
+            }).then((result: any) => {
+                if (!result || !result.success) {
+                    resolve({ success: false, error: result?.error || 'getRegisteredClasses failed' });
+                    return;
+                }
                 resolve({
                     success: true,
-                    data: { classes, count: classes.length, extendsFilter: extendsClass }
+                    data: { classes: result.data.classes, count: result.data.count, extendsFilter: extendsClass }
                 });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
@@ -335,7 +340,17 @@ export class ComponentToolsV2 implements ToolExecutor {
 
     private async queryComponentHasScript(className: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-component-has-script', className).then((hasScript: boolean) => {
+            // 通过场景进程验证类是否已注册（修复缺陷5）
+            Editor.Message.request('scene', 'execute-scene-script', {
+                name: 'cocos-mcp-server',
+                method: 'getRegisteredClasses',
+                args: [undefined]
+            }).then((result: any) => {
+                if (!result || !result.success) {
+                    resolve({ success: false, error: result?.error || 'getRegisteredClasses failed' });
+                    return;
+                }
+                const hasScript = result.data.classes.includes(className);
                 resolve({
                     success: true,
                     data: {

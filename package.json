@@ -151,7 +151,10 @@
                 "setComponentProperty",
                 "getCurrentSceneInfo",
                 "getSceneHierarchy",
-                "createPrefabFromNode"
+                "createPrefabFromNode",
+                "evalScript",
+                "getRegisteredClasses",
+                "getPerformanceStats"
             ]
         }
     }
