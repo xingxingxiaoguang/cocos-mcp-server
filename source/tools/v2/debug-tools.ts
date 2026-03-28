@@ -390,7 +390,7 @@ export class DebugToolsV2 implements ToolExecutor {
                     active: node.active,
                     type: node.type,
                     components: node.__comps__
-                        ? node.__comps__.map((c: any) => c.__type__ || 'Unknown')
+                        ? node.__comps__.map((c: any) => this.normalizeComponentType(c.__type__))
                         : [],
                     childCount: node.children ? node.children.length : 0,
                     children: (node.children || []).map((child: any) => buildTree(child, depth + 1))
@@ -429,6 +429,19 @@ export class DebugToolsV2 implements ToolExecutor {
                 return { success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` };
             }
         }
+    }
+
+    private normalizeComponentType(rawType: any): string {
+        if (rawType && typeof rawType === 'object') {
+            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
+            if (nested !== undefined && nested !== null) {
+                return String(nested);
+            }
+        }
+        if (rawType === undefined || rawType === null) {
+            return 'Unknown';
+        }
+        return String(rawType);
     }
 
     private async getPerformanceStats(): Promise<ToolResponse> {

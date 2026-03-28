@@ -739,6 +739,7 @@ export class PrefabTools implements ToolExecutor {
                         nodeUuid: nodeUuid,
                         prefabName: prefabName,
                         convertedToPrefabInstance: convertResult.success,
+                        convertedNodeUuid: convertResult.data?.replacementNodeUuid || nodeUuid,
                         createAssetResult: createResult,
                         updateResult: updateResult,
                         metaResult: metaResult,
@@ -862,21 +863,22 @@ export class PrefabTools implements ToolExecutor {
 
                 if (saveResult.success) {
                     // 保存成功后，将原始节点转换为预制体实例
-                    const convertResult = await this.convertNodeToPrefabInstance(nodeUuid, prefabPath, prefabUuid);
+                    const convertResult = await this.convertNodeToPrefabInstance(nodeUuid, prefabUuid, prefabPath);
                     
                     resolve({
                         success: true,
                         data: {
                             prefabUuid: prefabUuid,
-                            prefabPath: prefabPath,
-                            nodeUuid: nodeUuid,
-                            prefabName: prefabName,
-                            convertedToPrefabInstance: convertResult.success,
-                            message: convertResult.success ? 
+                        prefabPath: prefabPath,
+                        nodeUuid: nodeUuid,
+                        prefabName: prefabName,
+                        convertedToPrefabInstance: convertResult.success,
+                        convertedNodeUuid: convertResult.data?.replacementNodeUuid || nodeUuid,
+                        message: convertResult.success ? 
                                 '自定义预制体创建成功，原始节点已转换为预制体实例' : 
                                 '预制体创建成功，但节点转换失败'
-                        }
-                    });
+                    }
+                });
                 } else {
                     resolve({
                         success: false,
@@ -2343,16 +2345,143 @@ export class PrefabTools implements ToolExecutor {
     /**
      * 尝试将原始节点转换为预制体实例
      */
-    private async convertNodeToPrefabInstance(nodeUuid: string, prefabUuid: string, prefabPath: string): Promise<{ success: boolean; error?: string }> {
-        return new Promise((resolve) => {
-            // 这个功能需要深入的场景编辑器集成，暂时返回失败
-            // 在实际的引擎中，这涉及到复杂的预制体实例化和节点替换逻辑
-            console.log('节点转换为预制体实例的功能需要更深入的引擎集成');
-            resolve({
+    private async convertNodeToPrefabInstance(nodeUuid: string, prefabUuid: string, prefabPath: string): Promise<{ success: boolean; error?: string; data?: any }> {
+        try {
+            const linkAttempts = [
+                { method: 'link-prefab', payload: { nodeUuid, prefabAssetUuid: prefabUuid, prefabUuid, assetUuid: prefabUuid, prefabPath } },
+                { method: 'connect-prefab-instance', payload: { nodeUuid, prefabAssetUuid: prefabUuid, prefabUuid, assetUuid: prefabUuid, prefabPath } },
+                { method: 'set-prefab-connection', payload: { nodeUuid, prefabAssetUuid: prefabUuid, prefabUuid, assetUuid: prefabUuid, prefabPath } },
+                { method: 'apply-prefab-link', payload: { nodeUuid, prefabAssetUuid: prefabUuid, prefabUuid, assetUuid: prefabUuid, prefabPath } }
+            ];
+
+            for (const attempt of linkAttempts) {
+                try {
+                    await Editor.Message.request('scene', attempt.method as any, attempt.payload);
+                    return {
+                        success: true,
+                        data: {
+                            strategy: attempt.method,
+                            nodeUuid,
+                            prefabUuid,
+                            prefabPath
+                        }
+                    };
+                } catch (err) {
+                    console.warn(`[PrefabTools] ${attempt.method} failed`, err);
+                }
+            }
+
+            const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+            if (!nodeData) {
+                return { success: false, error: 'Failed to query source node for prefab conversion' };
+            }
+
+            const parentUuid = this.extractNodeUuid(nodeData.parent);
+            const nodeName = this.extractNodeName(nodeData.name) || 'PrefabInstance';
+            const nodeState = {
+                active: this.extractNodeValue(nodeData.active),
+                position: this.extractNodeValue(nodeData.position),
+                rotation: this.extractNodeValue(nodeData.rotation),
+                scale: this.extractNodeValue(nodeData.scale),
+                layer: this.extractNodeValue(nodeData.layer)
+            };
+            const createOptions: any = {
+                assetUuid: prefabUuid,
+                name: nodeName,
+                keepWorldTransform: true
+            };
+
+            if (parentUuid) {
+                createOptions.parent = parentUuid;
+            }
+
+            const dump: any = {};
+            if (nodeState.active !== undefined) {
+                dump.active = { value: nodeState.active };
+            }
+            if (nodeState.position) {
+                dump.position = { value: nodeState.position };
+            }
+            if (nodeState.rotation) {
+                dump.rotation = { value: nodeState.rotation };
+            }
+            if (nodeState.scale) {
+                dump.scale = { value: nodeState.scale };
+            }
+            if (nodeState.layer !== undefined) {
+                dump.layer = { value: nodeState.layer };
+            }
+            if (Object.keys(dump).length > 0) {
+                createOptions.dump = dump;
+            }
+
+            const createdNodeUuid = await Editor.Message.request('scene', 'create-node', createOptions);
+            const replacementNodeUuid = Array.isArray(createdNodeUuid) ? createdNodeUuid[0] : createdNodeUuid;
+            if (!replacementNodeUuid) {
+                return { success: false, error: 'Prefab instance creation did not return a node UUID' };
+            }
+
+            try {
+                await Editor.Message.request('scene', 'remove-node', { uuid: nodeUuid });
+            } catch (removeErr: any) {
+                return {
+                    success: false,
+                    error: `Prefab instance was created as ${replacementNodeUuid}, but removing the original node failed: ${removeErr.message || removeErr}`,
+                    data: {
+                        strategy: 'recreate',
+                        nodeUuid,
+                        replacementNodeUuid,
+                        prefabUuid,
+                        prefabPath
+                    }
+                };
+            }
+
+            return {
+                success: true,
+                data: {
+                    strategy: 'recreate',
+                    nodeUuid,
+                    replacementNodeUuid,
+                    prefabUuid,
+                    prefabPath
+                }
+            };
+        } catch (error: any) {
+            return {
                 success: false,
-                error: '节点转换为预制体实例需要更深入的引擎集成支持'
-            });
-        });
+                error: error.message || String(error)
+            };
+        }
+    }
+
+    private extractNodeName(value: any): string | null {
+        if (!value) {
+            return null;
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        if (typeof value.value === 'string') {
+            return value.value;
+        }
+        if (typeof value.name === 'string') {
+            return value.name;
+        }
+        if (value.name?.value !== undefined) {
+            return String(value.name.value);
+        }
+        if (typeof value.uuid === 'string') {
+            return value.uuid;
+        }
+        return null;
+    }
+
+    private extractNodeValue(value: any): any {
+        if (value && typeof value === 'object' && 'value' in value) {
+            return value.value;
+        }
+        return value;
     }
 
     private async restorePrefabNode(nodeUuid: string, assetUuid: string): Promise<ToolResponse> {

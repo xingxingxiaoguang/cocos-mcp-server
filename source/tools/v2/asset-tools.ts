@@ -334,19 +334,28 @@ export class AssetToolsV2 implements ToolExecutor {
     private async listAssets(type: string = 'all', folder: string = 'db://assets'): Promise<ToolResponse> {
         return new Promise((resolve) => {
             let pattern = `${folder}/**/*`;
+            const normalizedType = this.normalizeAssetTypeKey(type);
 
-            if (type && type !== 'all') {
+            if (normalizedType && normalizedType !== 'all') {
                 const typeExtensions: Record<string, string> = {
                     'scene': '.scene',
+                    'sceneasset': '.scene',
                     'prefab': '.prefab',
                     'script': '.{ts,js}',
                     'texture': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
+                    'imageasset': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
+                    'texture2d': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
                     'material': '.mtl',
                     'mesh': '.{fbx,obj,dae}',
                     'audio': '.{mp3,ogg,wav,m4a}',
-                    'animation': '.{anim,clip}'
+                    'audioclip': '.{mp3,ogg,wav,m4a}',
+                    'animation': '.{anim,clip}',
+                    'animationclip': '.{anim,clip}',
+                    'spriteframe': '.{png,jpg,jpeg}',
+                    'spriteatlas': '.plist',
+                    'font': '.{ttf,fnt,bmfont}'
                 };
-                const extension = typeExtensions[type];
+                const extension = typeExtensions[normalizedType];
                 if (extension) {
                     pattern = `${folder}/**/*${extension}`;
                 }
@@ -362,6 +371,22 @@ export class AssetToolsV2 implements ToolExecutor {
                     isDirectory: asset.isDirectory || false
                 }));
 
+                if (normalizedType && normalizedType !== 'all') {
+                    const filtered = assets.filter(asset => this.matchesAssetType(asset.type, normalizedType));
+                    if (filtered.length > 0) {
+                        resolve({
+                            success: true,
+                            data: {
+                                type: type || 'all',
+                                folder,
+                                count: filtered.length,
+                                assets: filtered
+                            }
+                        });
+                        return;
+                    }
+                }
+
                 resolve({
                     success: true,
                     data: {
@@ -375,6 +400,45 @@ export class AssetToolsV2 implements ToolExecutor {
                 resolve({ success: false, error: err.message });
             });
         });
+    }
+
+    private normalizeAssetTypeKey(type: any): string {
+        return String(type ?? '').trim().toLowerCase().replace(/^cc\./, '');
+    }
+
+    private getAssetTypeAliases(type: string): Set<string> {
+        const normalized = this.normalizeAssetTypeKey(type);
+        const aliasGroups: Record<string, string[]> = {
+            scene: ['scene', 'sceneasset'],
+            sceneasset: ['scene', 'sceneasset'],
+            prefab: ['prefab'],
+            script: ['script'],
+            texture: ['texture', 'imageasset', 'texture2d'],
+            imageasset: ['texture', 'imageasset', 'texture2d'],
+            texture2d: ['texture', 'imageasset', 'texture2d'],
+            material: ['material'],
+            mesh: ['mesh'],
+            audio: ['audio', 'audioclip'],
+            audioclip: ['audio', 'audioclip'],
+            animation: ['animation', 'animationclip'],
+            animationclip: ['animation', 'animationclip'],
+            spriteframe: ['spriteframe'],
+            spriteatlas: ['spriteatlas'],
+            font: ['font']
+        };
+
+        return new Set(aliasGroups[normalized] || [normalized]);
+    }
+
+    private matchesAssetType(assetType: string, requestedType: string): boolean {
+        const assetAliases = this.getAssetTypeAliases(assetType);
+        const requestedAliases = this.getAssetTypeAliases(requestedType);
+        for (const alias of requestedAliases) {
+            if (assetAliases.has(alias)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ==================== create ====================

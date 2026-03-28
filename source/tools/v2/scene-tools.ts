@@ -191,8 +191,8 @@ export class SceneToolsV2 implements ToolExecutor {
 
         if (includeComponents && node.__comps__) {
             nodeInfo.components = node.__comps__.map((comp: any) => ({
-                type: comp.__type__ || 'Unknown',
-                enabled: comp.enabled !== undefined ? comp.enabled : true
+                type: this.normalizeComponentType(comp.__type__),
+                enabled: this.extractComponentEnabled(comp)
             }));
         }
 
@@ -203,6 +203,29 @@ export class SceneToolsV2 implements ToolExecutor {
         }
 
         return nodeInfo;
+    }
+
+    private normalizeComponentType(rawType: any): string {
+        if (rawType && typeof rawType === 'object') {
+            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
+            if (nested !== undefined && nested !== null) {
+                return String(nested);
+            }
+        }
+        if (rawType === undefined || rawType === null) {
+            return 'Unknown';
+        }
+        return String(rawType);
+    }
+
+    private extractComponentEnabled(comp: any): boolean {
+        if (comp?.enabled?.value !== undefined) {
+            return !!comp.enabled.value;
+        }
+        if (comp?.enabled !== undefined) {
+            return !!comp.enabled;
+        }
+        return true;
     }
 
     private async queryList(): Promise<ToolResponse> {

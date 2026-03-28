@@ -3,6 +3,7 @@ import { ComponentToolsV2 } from './component-tools';
 
 export class NodeToolsV2 implements ToolExecutor {
     private componentTools = new ComponentToolsV2();
+    private cidNameMap: Map<string, string> | null = null;
 
     getTools(): ToolDefinition[] {
         return [
@@ -259,11 +260,13 @@ export class NodeToolsV2 implements ToolExecutor {
 
     private async queryByUuid(uuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-node', uuid).then((nodeData: any) => {
+            Editor.Message.request('scene', 'query-node', uuid).then(async (nodeData: any) => {
                 if (!nodeData) {
                     resolve({ success: false, error: 'Node not found or invalid response' });
                     return;
                 }
+
+                const cidMap = await this.buildCidNameMap();
 
                 const info: NodeInfo = {
                     uuid: nodeData.uuid?.value || uuid,
@@ -273,10 +276,12 @@ export class NodeToolsV2 implements ToolExecutor {
                     rotation: nodeData.rotation?.value || { x: 0, y: 0, z: 0 },
                     scale: nodeData.scale?.value || { x: 1, y: 1, z: 1 },
                     parent: nodeData.parent?.value?.uuid || null,
-                    children: nodeData.children || [],
+                    children: Array.isArray(nodeData.children)
+                        ? nodeData.children.map((child: any) => this.getNodeName(child)).filter(Boolean)
+                        : [],
                     components: (nodeData.__comps__ || []).map((comp: any) => ({
-                        type: comp.__type__ || 'Unknown',
-                        enabled: comp.enabled !== undefined ? comp.enabled : true
+                        type: this.resolveComponentType(comp.__type__ || comp.cid || comp.type, cidMap),
+                        enabled: this.extractComponentEnabled(comp)
                     })),
                     layer: nodeData.layer?.value || 1073741824,
                     mobility: nodeData.mobility?.value || 0
@@ -364,23 +369,28 @@ export class NodeToolsV2 implements ToolExecutor {
             Editor.Message.request('scene', 'query-node-tree').then((tree: any) => {
                 const nodes: any[] = [];
 
-                const traverseTree = (node: any) => {
+                const traverseTree = (node: any, currentPath: string = '') => {
+                    const nodePath = currentPath ? `${currentPath}/${this.getNodeName(node)}` : this.getNodeName(node);
                     nodes.push({
                         uuid: node.uuid,
-                        name: node.name,
+                        name: this.getNodeName(node),
                         type: node.type,
                         active: node.active,
-                        path: this.getNodePath(node)
+                        path: nodePath
                     });
 
                     if (node.children) {
                         for (const child of node.children) {
-                            traverseTree(child);
+                            traverseTree(child, nodePath);
                         }
                     }
                 };
 
-                if (tree && tree.children) {
+                if (Array.isArray(tree)) {
+                    for (const root of tree) {
+                        traverseTree(root);
+                    }
+                } else if (tree) {
                     traverseTree(tree);
                 }
 
@@ -406,14 +416,84 @@ export class NodeToolsV2 implements ToolExecutor {
         });
     }
 
-    private getNodePath(node: any): string {
-        const path = [node.name];
-        let current = node.parent;
-        while (current && current.name !== 'Canvas') {
-            path.unshift(current.name);
-            current = current.parent;
+    private getNodeName(node: any): string {
+        if (!node) {
+            return 'Unknown';
         }
-        return path.join('/');
+        if (typeof node === 'string') {
+            return node;
+        }
+        return node.name?.value || node.name || node.value?.name?.value || node.value?.name || 'Unknown';
+    }
+
+    private async buildCidNameMap(): Promise<Map<string, string>> {
+        if (this.cidNameMap) {
+            return this.cidNameMap;
+        }
+
+        const map = new Map<string, string>();
+
+        const collect = (items: any[]) => {
+            for (const item of items) {
+                if (item && item.cid && item.name) {
+                    map.set(String(item.cid), String(item.name));
+                }
+            }
+        };
+
+        try {
+            const result = await Editor.Message.request('scene', 'query-component-function-of-node', '');
+            if (Array.isArray(result)) {
+                collect(result);
+            }
+        } catch {
+            // fall through
+        }
+
+        if (map.size === 0) {
+            try {
+                const result = await Editor.Message.request('scene', 'query-components');
+                if (Array.isArray(result)) {
+                    collect(result);
+                }
+            } catch {
+                // best effort
+            }
+        }
+
+        this.cidNameMap = map;
+        return map;
+    }
+
+    private resolveComponentType(rawType: any, cidMap: Map<string, string>): string {
+        const normalizedType = this.normalizeComponentType(rawType);
+        return cidMap.get(normalizedType) || normalizedType;
+    }
+
+    private normalizeComponentType(rawType: any): string {
+        if (rawType && typeof rawType === 'object') {
+            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
+            if (nested !== undefined && nested !== null) {
+                if (typeof nested === 'object') {
+                    return this.normalizeComponentType(nested);
+                }
+                return String(nested);
+            }
+        }
+        if (rawType === undefined || rawType === null) {
+            return 'Unknown';
+        }
+        return String(rawType);
+    }
+
+    private extractComponentEnabled(comp: any): boolean {
+        if (comp?.enabled?.value !== undefined) {
+            return !!comp.enabled.value;
+        }
+        if (comp?.enabled !== undefined) {
+            return !!comp.enabled;
+        }
+        return true;
     }
 
     // ---- node_create ----

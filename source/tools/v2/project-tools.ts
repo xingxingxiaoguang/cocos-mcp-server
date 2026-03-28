@@ -1,4 +1,6 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ProjectInfo } from '../../types';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * ProjectToolsV2 — 项目工具 v2
@@ -81,6 +83,13 @@ export class ProjectToolsV2 implements ToolExecutor {
                 cocosVersion: (Editor as any).versions?.cocos || 'Unknown'
             };
 
+            const projectConfig = this.readProjectConfig();
+            if (projectConfig) {
+                Object.assign(info, { config: projectConfig });
+                resolve({ success: true, data: info });
+                return;
+            }
+
             Editor.Message.request('project', 'query-config', 'project').then((additionalInfo: any) => {
                 if (additionalInfo) {
                     Object.assign(info, { config: additionalInfo });
@@ -94,27 +103,130 @@ export class ProjectToolsV2 implements ToolExecutor {
 
     private async getProjectSettings(category: string = 'general'): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            const configMap: Record<string, string> = {
-                general: 'project',
-                physics: 'physics',
-                render: 'render',
-                assets: 'asset-db'
-            };
-            const configName = configMap[category] || 'project';
+            const projectConfig = this.readProjectConfig(category);
+            if (projectConfig) {
+                const extracted = this.extractProjectSettings(projectConfig, category);
+                if (extracted !== null && extracted !== undefined) {
+                    resolve({
+                        success: true,
+                        data: {
+                            category,
+                            config: extracted,
+                            message: `${category} settings retrieved successfully`,
+                            source: 'settings/project.json'
+                        }
+                    });
+                    return;
+                }
+            }
 
-            Editor.Message.request('project', 'query-config', configName).then((settings: any) => {
+            // physics/render 等子分类在 Editor API 中不是独立的 configName，
+            // 它们内嵌在 'project' config 中，需要先获取完整配置再提取
+            Editor.Message.request('project', 'query-config', 'project').then((fullConfig: any) => {
+                const extracted = this.extractProjectSettings(fullConfig, category);
+                if (extracted !== null && extracted !== undefined) {
+                    resolve({
+                        success: true,
+                        data: {
+                            category,
+                            config: extracted,
+                            message: `${category} settings retrieved successfully`,
+                            source: 'Editor.Message (project config)'
+                        }
+                    });
+                    return;
+                }
+                const available = fullConfig ? Object.keys(fullConfig).filter(k => !k.startsWith('_')) : [];
                 resolve({
-                    success: true,
-                    data: {
-                        category,
-                        config: settings,
-                        message: `${category} settings retrieved successfully`
-                    }
+                    success: false,
+                    error: `Category '${category}' not found. Available: ${available.join(', ')}`
                 });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
             });
         });
+    }
+
+    private readProjectConfig(category?: string): any | null {
+        const normalizedCategory = String(category || '').trim().toLowerCase();
+        const candidates = [
+            path.join(Editor.Project.path, 'settings', 'v2', 'packages', 'project.json'),
+            path.join(Editor.Project.path, 'settings', 'project.json'),
+        ];
+
+        let bestMatch: { config: any; score: number } | null = null;
+
+        for (const configPath of candidates) {
+            try {
+                if (fs.existsSync(configPath)) {
+                    const content = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+                    if (!this.isMeaningfulProjectConfig(content)) {
+                        continue;
+                    }
+
+                    if (!normalizedCategory) {
+                        const score = Object.keys(content).length;
+                        if (!bestMatch || score > bestMatch.score) {
+                            bestMatch = { config: content, score };
+                        }
+                        continue;
+                    }
+
+                    const extracted = this.extractProjectSettings(content, normalizedCategory);
+                    if (extracted !== null && extracted !== undefined) {
+                        const score = Object.keys(content).length;
+                        if (!bestMatch || score > bestMatch.score) {
+                            bestMatch = { config: content, score };
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn(`[ProjectToolsV2] Failed to read ${configPath}:`, err);
+            }
+        }
+
+        return bestMatch?.config || null;
+    }
+
+    private extractProjectSettings(projectConfig: any, category: string): any {
+        if (!projectConfig) {
+            return null;
+        }
+
+        if (category === 'all') {
+            return projectConfig;
+        }
+
+        if (category === 'general') {
+            return projectConfig.general ?? projectConfig;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(projectConfig, category)) {
+            return projectConfig[category];
+        }
+
+        const nestedPaths = [
+            projectConfig.settings?.[category],
+            projectConfig.general?.[category],
+            projectConfig.general?.settings?.[category],
+            projectConfig.project?.[category]
+        ];
+
+        for (const candidate of nestedPaths) {
+            if (candidate !== undefined && candidate !== null) {
+                return candidate;
+            }
+        }
+
+        return projectConfig[category] ?? null;
+    }
+
+    private isMeaningfulProjectConfig(content: any): boolean {
+        if (!content || typeof content !== 'object') {
+            return false;
+        }
+        const keys = Object.keys(content).filter(key => key !== '__version__');
+        return keys.length > 0;
     }
 
     private async getBuildSettings(): Promise<ToolResponse> {
