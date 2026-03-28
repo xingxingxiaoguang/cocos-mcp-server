@@ -1,5 +1,55 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ComponentInfo } from '../../types';
 
+function serializeToolResult(value: any, depth: number = 0, seen: WeakSet<object> = new WeakSet()): any {
+    if (depth > 3) return '[max depth]';
+    if (value === null || value === undefined) return value;
+
+    const type = typeof value;
+    if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') {
+        return type === 'bigint' ? value.toString() : value;
+    }
+    if (type === 'function') {
+        return `[Function ${value.name || 'anonymous'}]`;
+    }
+
+    if (Array.isArray(value)) {
+        return value.slice(0, 100).map((item: any) => serializeToolResult(item, depth + 1, seen));
+    }
+
+    if (type === 'object') {
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return value.valueOf();
+        }
+
+        if (seen.has(value)) {
+            return '[circular]';
+        }
+        seen.add(value);
+
+        try {
+            const keys = Object.keys(value);
+            const result: Record<string, any> = {};
+            for (const key of keys.slice(0, 20)) {
+                try {
+                    const item = value[key];
+                    if (item !== undefined && typeof item !== 'function') {
+                        result[key] = serializeToolResult(item, depth + 1, seen);
+                    }
+                } catch {
+                    // Skip inaccessible property
+                }
+            }
+            if (Object.keys(result).length > 0) {
+                return result;
+            }
+        } finally {
+            seen.delete(value);
+        }
+    }
+
+    return String(value);
+}
+
 export class ComponentToolsV2 implements ToolExecutor {
     getTools(): ToolDefinition[] {
         return [
@@ -190,91 +240,166 @@ export class ComponentToolsV2 implements ToolExecutor {
     // Component query methods (migrated from ComponentTools)
     // ============================================================
 
-    private async getComponents(nodeUuid: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-node', nodeUuid).then((nodeData: any) => {
-                if (nodeData && nodeData.__comps__) {
-                    const components = nodeData.__comps__.map((comp: any) => ({
-                        type: comp.__type__ || comp.cid || comp.type || 'Unknown',
-                        uuid: comp.uuid?.value || comp.uuid || null,
-                        enabled: comp.enabled !== undefined ? comp.enabled : true,
-                        properties: this.extractComponentProperties(comp)
-                    }));
-                    resolve({
-                        success: true,
-                        data: { nodeUuid, components }
-                    });
-                } else {
-                    resolve({ success: false, error: 'Node not found or no components data' });
+    private async buildCidNameMap(): Promise<Map<string, string>> {
+        const map = new Map<string, string>();
+        const build = (items: any[]) => {
+            for (const item of items) {
+                if (item && item.cid && item.name) {
+                    map.set(item.cid, item.name);
                 }
-            }).catch((err: Error) => {
-                const options = {
-                    name: 'cocos-mcp-server',
-                    method: 'getNodeInfo',
-                    args: [nodeUuid]
-                };
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
-                    if (result.success) {
-                        resolve({ success: true, data: result.data.components });
-                    } else {
-                        resolve(result);
-                    }
-                }).catch((err2: Error) => {
-                    resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
+            }
+        };
+
+        try {
+            const result = await Editor.Message.request('scene', 'query-component-function-of-node', '');
+            if (Array.isArray(result)) {
+                build(result);
+                return map;
+            }
+        } catch {
+            // Ignore and fallback to query-components
+        }
+
+        try {
+            const result = await Editor.Message.request('scene', 'query-components');
+            if (Array.isArray(result)) {
+                build(result);
+            }
+        } catch {
+            // Ignore; type map is best-effort only
+        }
+
+        return map;
+    }
+
+    private normalizeComponentType(rawType: any): string {
+        if (rawType && typeof rawType === 'object') {
+            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
+            if (nested !== undefined && nested !== null) {
+                return String(nested);
+            }
+        }
+        if (rawType === undefined || rawType === null) return 'Unknown';
+        return String(rawType);
+    }
+
+    private resolveComponentType(rawType: any, cidMap: Map<string, string>): { type: string; cid?: string } {
+        const normalizedType = this.normalizeComponentType(rawType);
+        const resolvedType = cidMap.get(normalizedType) || normalizedType;
+        if (resolvedType !== normalizedType) {
+            return { type: resolvedType, cid: normalizedType };
+        }
+        return { type: resolvedType };
+    }
+
+    private isComponentMatch(component: any, componentType: string): boolean {
+        const target = this.normalizeComponentType(componentType);
+        const type = this.normalizeComponentType(component?.type);
+        const cid = component?.cid ? this.normalizeComponentType(component.cid) : '';
+        return type === target || cid === target;
+    }
+
+    private countMatchingComponents(components: any[], componentType: string): number {
+        return components.filter((comp: any) => this.isComponentMatch(comp, componentType)).length;
+    }
+
+    private findMatchingComponent(components: any[], componentType: string): any {
+        return components.find((comp: any) => this.isComponentMatch(comp, componentType));
+    }
+
+    private getComponentAliases(componentType: string, cidMap: Map<string, string>): Set<string> {
+        const normalized = this.normalizeComponentType(componentType);
+        const aliases = new Set<string>([normalized]);
+        const mapped = cidMap.get(normalized);
+        if (mapped) {
+            aliases.add(this.normalizeComponentType(mapped));
+        }
+
+        for (const [cid, name] of cidMap.entries()) {
+            if (name === normalized) {
+                aliases.add(this.normalizeComponentType(cid));
+                break;
+            }
+        }
+
+        return aliases;
+    }
+
+    private async getComponents(nodeUuid: string): Promise<ToolResponse> {
+        const cidMap = await this.buildCidNameMap();
+
+        try {
+            const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+            if (nodeData && nodeData.__comps__) {
+                const components = nodeData.__comps__.map((comp: any) => {
+                    const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
+                    const resolvedType = this.resolveComponentType(rawType, cidMap);
+                    return {
+                        type: resolvedType.type,
+                        cid: resolvedType.cid,
+                        uuid: comp.uuid?.value || comp.uuid || comp.value?.uuid?.value || null,
+                        enabled: comp.enabled?.value !== undefined ? comp.enabled.value : (comp.enabled !== undefined ? comp.enabled : true),
+                        properties: this.extractComponentProperties(comp)
+                    };
                 });
-            });
-        });
+                return { success: true, data: { nodeUuid, components } };
+            }
+
+            return { success: false, error: 'Node not found or no components data' };
+        } catch (err: any) {
+            const options = {
+                name: 'cocos-mcp-server',
+                method: 'getNodeInfo',
+                args: [nodeUuid]
+            };
+
+            try {
+                const result = await Editor.Message.request('scene', 'execute-scene-script', options);
+                if (!result?.success) {
+                    return { success: false, error: result?.error || 'Scene script fallback failed' };
+                }
+
+                const rawComponents = Array.isArray(result?.data?.components)
+                    ? result.data.components
+                    : (Array.isArray(result?.data) ? result.data : []);
+
+                const components = rawComponents.map((comp: any) => {
+                    const rawType = comp.__type__ || comp.cid || comp.type || comp.constructor?.name || 'Unknown';
+                    const resolvedType = this.resolveComponentType(rawType, cidMap);
+                    return {
+                        type: resolvedType.type,
+                        cid: resolvedType.cid || comp.cid,
+                        uuid: comp.uuid?.value || comp.uuid || comp.value?.uuid?.value || null,
+                        enabled: comp.enabled?.value !== undefined ? comp.enabled.value : (comp.enabled !== undefined ? comp.enabled : true),
+                        properties: comp.properties || this.extractComponentProperties(comp)
+                    };
+                });
+
+                return { success: true, data: { nodeUuid, components } };
+            } catch (err2: any) {
+                return { success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` };
+            }
+        }
     }
 
     private async getComponentInfo(nodeUuid: string, componentType: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            Editor.Message.request('scene', 'query-node', nodeUuid).then((nodeData: any) => {
-                if (nodeData && nodeData.__comps__) {
-                    const component = nodeData.__comps__.find((comp: any) => {
-                        const compType = comp.__type__ || comp.cid || comp.type;
-                        return compType === componentType;
-                    });
-                    if (component) {
-                        resolve({
-                            success: true,
-                            data: {
-                                nodeUuid,
-                                componentType,
-                                enabled: component.enabled !== undefined ? component.enabled : true,
-                                properties: this.extractComponentProperties(component)
-                            }
-                        });
-                    } else {
-                        resolve({ success: false, error: `Component '${componentType}' not found on node` });
-                    }
-                } else {
-                    resolve({ success: false, error: 'Node not found or no components data' });
-                }
-            }).catch((err: Error) => {
-                const options = {
-                    name: 'cocos-mcp-server',
-                    method: 'getNodeInfo',
-                    args: [nodeUuid]
-                };
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
-                    if (result.success && result.data.components) {
-                        const component = result.data.components.find((comp: any) => comp.type === componentType);
-                        if (component) {
-                            resolve({
-                                success: true,
-                                data: { nodeUuid, componentType, ...component }
-                            });
-                        } else {
-                            resolve({ success: false, error: `Component '${componentType}' not found on node` });
-                        }
-                    } else {
-                        resolve({ success: false, error: result.error || 'Failed to get component info' });
-                    }
-                }).catch((err2: Error) => {
-                    resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
-                });
-            });
-        });
+        const allComponentsInfo = await this.getComponents(nodeUuid);
+        if (!allComponentsInfo.success || !allComponentsInfo.data?.components) {
+            return {
+                success: false,
+                error: allComponentsInfo.error || 'Node not found or no components data'
+            };
+        }
+
+        const component = this.findMatchingComponent(allComponentsInfo.data.components, componentType);
+        if (!component) {
+            return { success: false, error: `Component '${componentType}' not found on node` };
+        }
+
+        return {
+            success: true,
+            data: { nodeUuid, componentType: component.type, ...component }
+        };
     }
 
     private async getAvailableComponents(category: string = 'all'): Promise<ToolResponse> {
@@ -370,126 +495,168 @@ export class ComponentToolsV2 implements ToolExecutor {
     // ============================================================
 
     private async addComponent(nodeUuid: string, componentType: string): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
-            // Check if component already exists
-            const allComponentsInfo = await this.getComponents(nodeUuid);
-            if (allComponentsInfo.success && allComponentsInfo.data?.components) {
-                const existingComponent = allComponentsInfo.data.components.find((comp: any) => comp.type === componentType);
-                if (existingComponent) {
-                    resolve({
-                        success: true,
-                        message: `Component '${componentType}' already exists on node`,
-                        data: { nodeUuid, componentType, componentVerified: true, existing: true }
-                    });
-                    return;
-                }
+        const beforeInfo = await this.getComponents(nodeUuid);
+        const beforeComponents = beforeInfo.success && beforeInfo.data?.components ? beforeInfo.data.components : [];
+        const beforeCount = beforeComponents.length;
+
+        if (beforeInfo.success && beforeInfo.data?.components) {
+            const existingComponent = this.findMatchingComponent(beforeInfo.data.components, componentType);
+            if (existingComponent) {
+                return {
+                    success: true,
+                    message: `Component '${componentType}' already exists on node`,
+                    data: {
+                        nodeUuid,
+                        componentType: existingComponent.type,
+                        cid: existingComponent.cid,
+                        componentVerified: true,
+                        existing: true
+                    }
+                };
             }
-            // Try Editor API
-            Editor.Message.request('scene', 'create-component', {
+        }
+
+        try {
+            await Editor.Message.request('scene', 'create-component', {
                 uuid: nodeUuid,
                 component: componentType
-            }).then(async () => {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                try {
-                    const allComponentsInfo2 = await this.getComponents(nodeUuid);
-                    if (allComponentsInfo2.success && allComponentsInfo2.data?.components) {
-                        const addedComponent = allComponentsInfo2.data.components.find((comp: any) => comp.type === componentType);
-                        if (addedComponent) {
-                            resolve({
-                                success: true,
-                                message: `Component '${componentType}' added successfully`,
-                                data: { nodeUuid, componentType, componentVerified: true, existing: false }
-                            });
-                        } else {
-                            resolve({
-                                success: false,
-                                error: `Component '${componentType}' was not found on node after addition. Available components: ${allComponentsInfo2.data.components.map((c: any) => c.type).join(', ')}`
-                            });
-                        }
-                    } else {
-                        resolve({ success: false, error: `Failed to verify component addition: ${allComponentsInfo2.error || 'Unable to get node components'}` });
-                    }
-                } catch (verifyError: any) {
-                    resolve({ success: false, error: `Failed to verify component addition: ${verifyError.message}` });
-                }
-            }).catch((err: Error) => {
-                // Fallback: scene script
-                const options = {
+            });
+        } catch (err: any) {
+            try {
+                const fallbackResult = await Editor.Message.request('scene', 'execute-scene-script', {
                     name: 'cocos-mcp-server',
                     method: 'addComponentToNode',
                     args: [nodeUuid, componentType]
-                };
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
-                    resolve(result);
-                }).catch((err2: Error) => {
-                    resolve({ success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` });
                 });
-            });
-        });
+                if (!fallbackResult?.success) {
+                    return { success: false, error: fallbackResult?.error || err.message };
+                }
+            } catch (err2: any) {
+                return { success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` };
+            }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const afterInfo = await this.getComponents(nodeUuid);
+        if (!afterInfo.success || !afterInfo.data?.components) {
+            return { success: false, error: `Failed to verify component addition: ${afterInfo.error || 'Unable to get node components'}` };
+        }
+
+        const afterComponents = afterInfo.data.components;
+        const afterCount = afterComponents.length;
+        const addedComponent = this.findMatchingComponent(afterComponents, componentType);
+
+        if (addedComponent && afterCount >= beforeCount) {
+            return {
+                success: true,
+                message: `Component '${componentType}' added successfully`,
+                data: {
+                    nodeUuid,
+                    componentType: addedComponent.type,
+                    cid: addedComponent.cid,
+                    componentVerified: true,
+                    existing: false
+                }
+            };
+        }
+
+        if (afterCount > beforeCount) {
+            return {
+                success: true,
+                message: `Component '${componentType}' added successfully`,
+                data: {
+                    nodeUuid,
+                    componentType,
+                    componentVerified: true,
+                    existing: false
+                }
+            };
+        }
+
+        return {
+            success: false,
+            error: `Failed to add component '${componentType}'. Component count unchanged. Available components: ${afterComponents.map((c: any) => c.type).join(', ')}`
+        };
     }
 
     private async attachScript(nodeUuid: string, scriptPath: string): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
-            const scriptName = scriptPath.split('/').pop()?.replace('.ts', '').replace('.js', '');
-            if (!scriptName) {
-                resolve({ success: false, error: 'Invalid script path' });
-                return;
+        const scriptName = scriptPath.split('/').pop()?.replace('.ts', '').replace('.js', '');
+        if (!scriptName) {
+            return { success: false, error: 'Invalid script path' };
+        }
+
+        const beforeInfo = await this.getComponents(nodeUuid);
+        const beforeComponents = beforeInfo.success && beforeInfo.data?.components ? beforeInfo.data.components : [];
+        const beforeCount = beforeComponents.length;
+
+        if (beforeInfo.success && beforeInfo.data?.components) {
+            const existingScript = this.findMatchingComponent(beforeInfo.data.components, scriptName);
+            if (existingScript) {
+                return {
+                    success: true,
+                    message: `Script '${scriptName}' already exists on node`,
+                    data: { nodeUuid, componentName: existingScript.type, cid: existingScript.cid, existing: true }
+                };
             }
-            // Check if script already exists
-            const allComponentsInfo = await this.getComponents(nodeUuid);
-            if (allComponentsInfo.success && allComponentsInfo.data?.components) {
-                const existingScript = allComponentsInfo.data.components.find((comp: any) => comp.type === scriptName);
-                if (existingScript) {
-                    resolve({
-                        success: true,
-                        message: `Script '${scriptName}' already exists on node`,
-                        data: { nodeUuid, componentName: scriptName, existing: true }
-                    });
-                    return;
-                }
-            }
-            // Try using script name as component type
-            Editor.Message.request('scene', 'create-component', {
+        }
+
+        try {
+            await Editor.Message.request('scene', 'create-component', {
                 uuid: nodeUuid,
                 component: scriptName
-            }).then(async () => {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                const allComponentsInfo2 = await this.getComponents(nodeUuid);
-                if (allComponentsInfo2.success && allComponentsInfo2.data?.components) {
-                    const addedScript = allComponentsInfo2.data.components.find((comp: any) => comp.type === scriptName);
-                    if (addedScript) {
-                        resolve({
-                            success: true,
-                            message: `Script '${scriptName}' attached successfully`,
-                            data: { nodeUuid, componentName: scriptName, existing: false }
-                        });
-                    } else {
-                        resolve({
-                            success: false,
-                            error: `Script '${scriptName}' was not found on node after addition. Available components: ${allComponentsInfo2.data.components.map((c: any) => c.type).join(', ')}`
-                        });
-                    }
-                } else {
-                    resolve({ success: false, error: `Failed to verify script addition: ${allComponentsInfo2.error || 'Unable to get node components'}` });
-                }
-            }).catch((err: Error) => {
-                // Fallback: scene script
-                const options = {
-                    name: 'cocos-mcp-server',
-                    method: 'attachScript',
-                    args: [nodeUuid, scriptPath]
-                };
-                Editor.Message.request('scene', 'execute-scene-script', options).then((result: any) => {
-                    resolve(result);
-                }).catch(() => {
-                    resolve({
-                        success: false,
-                        error: `Failed to attach script '${scriptName}': ${err.message}`,
-                        instruction: 'Please ensure the script is properly compiled and exported as a Component class.'
-                    });
-                });
             });
-        });
+        } catch (err: any) {
+            try {
+                const fallbackResult = await Editor.Message.request('scene', 'execute-scene-script', {
+                    name: 'cocos-mcp-server',
+                    method: 'addComponentToNode',
+                    args: [nodeUuid, scriptName]
+                });
+                if (!fallbackResult?.success) {
+                    return {
+                        success: false,
+                        error: fallbackResult?.error || err.message,
+                        instruction: 'Please ensure the script is properly compiled and exported as a Component class.'
+                    };
+                }
+            } catch {
+                return {
+                    success: false,
+                    error: `Failed to attach script '${scriptName}': ${err.message}`,
+                    instruction: 'Please ensure the script is properly compiled and exported as a Component class.'
+                };
+            }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const afterInfo = await this.getComponents(nodeUuid);
+        if (!afterInfo.success || !afterInfo.data?.components) {
+            return { success: false, error: `Failed to verify script addition: ${afterInfo.error || 'Unable to get node components'}` };
+        }
+
+        const afterComponents = afterInfo.data.components;
+        const afterCount = afterComponents.length;
+        const addedScript = this.findMatchingComponent(afterComponents, scriptName);
+        if (addedScript && afterCount >= beforeCount) {
+            return {
+                success: true,
+                message: `Script '${scriptName}' attached successfully`,
+                data: { nodeUuid, componentName: addedScript.type, cid: addedScript.cid, existing: false }
+            };
+        }
+
+        if (afterCount > beforeCount) {
+            return {
+                success: true,
+                message: `Script '${scriptName}' attached successfully`,
+                data: { nodeUuid, componentName: scriptName, existing: false }
+            };
+        }
+
+        return {
+            success: false,
+            error: `Script '${scriptName}' was not found on node after addition. Available components: ${afterComponents.map((c: any) => c.type).join(', ')}`
+        };
     }
 
     // ============================================================
@@ -497,37 +664,60 @@ export class ComponentToolsV2 implements ToolExecutor {
     // ============================================================
 
     private async removeComponent(nodeUuid: string, componentType: string): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
-            const allComponentsInfo = await this.getComponents(nodeUuid);
-            if (!allComponentsInfo.success || !allComponentsInfo.data?.components) {
-                resolve({ success: false, error: `Failed to get components for node '${nodeUuid}': ${allComponentsInfo.error}` });
-                return;
-            }
-            const exists = allComponentsInfo.data.components.some((comp: any) => comp.type === componentType);
-            if (!exists) {
-                resolve({ success: false, error: `Component cid '${componentType}' not found on node '${nodeUuid}'. Use component_query to get the correct type (cid).` });
-                return;
-            }
+        const allComponentsInfo = await this.getComponents(nodeUuid);
+        if (!allComponentsInfo.success || !allComponentsInfo.data?.components) {
+            return { success: false, error: `Failed to get components for node '${nodeUuid}': ${allComponentsInfo.error}` };
+        }
+
+        const components = allComponentsInfo.data.components;
+        const targetIndex = components.findIndex((comp: any) => this.isComponentMatch(comp, componentType));
+        if (targetIndex < 0) {
+            const available = components.map((comp: any) => comp.type).join(', ');
+            return {
+                success: false,
+                error: `Component '${componentType}' not found on node '${nodeUuid}'. Available: ${available}`
+            };
+        }
+
+        const beforeCount = this.countMatchingComponents(components, componentType);
+
+        try {
+            await Editor.Message.request('scene', 'remove-array-element', {
+                uuid: nodeUuid,
+                path: '__comps__',
+                index: targetIndex
+            });
+        } catch (err: any) {
             try {
-                await Editor.Message.request('scene', 'remove-component', {
-                    uuid: nodeUuid,
-                    component: componentType
+                const fallbackResult = await Editor.Message.request('scene', 'execute-scene-script', {
+                    name: 'cocos-mcp-server',
+                    method: 'removeComponentFromNode',
+                    args: [nodeUuid, componentType]
                 });
-                const afterRemoveInfo = await this.getComponents(nodeUuid);
-                const stillExists = afterRemoveInfo.success && afterRemoveInfo.data?.components?.some((comp: any) => comp.type === componentType);
-                if (stillExists) {
-                    resolve({ success: false, error: `Component cid '${componentType}' was not removed from node '${nodeUuid}'.` });
-                } else {
-                    resolve({
-                        success: true,
-                        message: `Component cid '${componentType}' removed successfully from node '${nodeUuid}'`,
-                        data: { nodeUuid, componentType }
-                    });
+                if (!fallbackResult?.success) {
+                    return { success: false, error: `Failed to remove component: ${fallbackResult?.error || err.message}` };
                 }
-            } catch (err: any) {
-                resolve({ success: false, error: `Failed to remove component: ${err.message}` });
+            } catch {
+                return { success: false, error: `Failed to remove component: ${err.message}` };
             }
-        });
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const afterInfo = await this.getComponents(nodeUuid);
+        if (!afterInfo.success || !afterInfo.data?.components) {
+            return { success: false, error: `Failed to verify component removal: ${afterInfo.error || 'Unable to get node components'}` };
+        }
+
+        const afterCount = this.countMatchingComponents(afterInfo.data.components, componentType);
+        if (afterCount >= beforeCount) {
+            return { success: false, error: `Component '${componentType}' still exists after removal attempt` };
+        }
+
+        return {
+            success: true,
+            message: `Component '${componentType}' removed successfully`,
+            data: { nodeUuid, componentType, removedIndex: targetIndex }
+        };
     }
 
     // Migrated from SceneAdvancedTools
@@ -549,7 +739,7 @@ export class ComponentToolsV2 implements ToolExecutor {
             }).then((result: any) => {
                 resolve({
                     success: true,
-                    data: { result, message: `Method '${name}' executed successfully` }
+                    data: { result: serializeToolResult(result), message: `Method '${name}' executed successfully` }
                 });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
@@ -755,11 +945,15 @@ export class ComponentToolsV2 implements ToolExecutor {
                     return;
                 }
 
+                const cidMap = await this.buildCidNameMap();
+                const componentAliases = this.getComponentAliases(componentType, cidMap);
                 let rawComponentIndex = -1;
                 for (let i = 0; i < rawNodeData.__comps__.length; i++) {
                     const comp = rawNodeData.__comps__[i] as any;
-                    const compType = comp.__type__ || comp.cid || comp.type || 'Unknown';
-                    if (compType === componentType) {
+                    const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
+                    const resolved = this.resolveComponentType(rawType, cidMap);
+                    const rawTypeNormalized = this.normalizeComponentType(rawType);
+                    if (componentAliases.has(rawTypeNormalized) || componentAliases.has(resolved.type)) {
                         rawComponentIndex = i;
                         break;
                     }
@@ -866,10 +1060,14 @@ export class ComponentToolsV2 implements ToolExecutor {
                         throw new Error(`Target node ${targetNodeUuid} not found or has no components`);
                     }
 
+                    const expectedAliases = this.getComponentAliases(expectedComponentType, cidMap);
                     let componentId: string | null = null;
                     for (let i = 0; i < targetNodeData.__comps__.length; i++) {
                         const comp = targetNodeData.__comps__[i] as any;
-                        if (comp.type === expectedComponentType) {
+                        const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
+                        const resolved = this.resolveComponentType(rawType, cidMap);
+                        const rawTypeNormalized = this.normalizeComponentType(rawType);
+                        if (expectedAliases.has(rawTypeNormalized) || expectedAliases.has(resolved.type)) {
                             if (comp.value && comp.value.uuid && comp.value.uuid.value) {
                                 componentId = comp.value.uuid.value;
                             } else {
@@ -881,11 +1079,14 @@ export class ComponentToolsV2 implements ToolExecutor {
 
                     if (!componentId) {
                         const availableComponents = targetNodeData.__comps__.map((comp: any, index: number) => {
+                            const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
+                            const resolved = this.resolveComponentType(rawType, cidMap);
                             let sceneId = 'unknown';
                             if (comp.value && comp.value.uuid && comp.value.uuid.value) {
                                 sceneId = comp.value.uuid.value;
                             }
-                            return `${comp.type}(scene_id:${sceneId})`;
+                            const label = resolved.cid ? `${resolved.type}[${resolved.cid}]` : resolved.type;
+                            return `${label}(scene_id:${sceneId})`;
                         });
                         throw new Error(`Component type '${expectedComponentType}' not found on node ${targetNodeUuid}. Available components: ${availableComponents.join(', ')}`);
                     }

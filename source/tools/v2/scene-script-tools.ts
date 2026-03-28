@@ -1,5 +1,55 @@
 import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
 
+function serializeResult(value: any, depth: number = 0, seen: WeakSet<object> = new WeakSet()): any {
+    if (depth > 3) return '[max depth]';
+    if (value === null || value === undefined) return value;
+
+    const type = typeof value;
+    if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') {
+        return type === 'bigint' ? value.toString() : value;
+    }
+    if (type === 'function') {
+        return `[Function ${value.name || 'anonymous'}]`;
+    }
+
+    if (Array.isArray(value)) {
+        return value.slice(0, 100).map((item: any) => serializeResult(item, depth + 1, seen));
+    }
+
+    if (type === 'object') {
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return value.valueOf();
+        }
+
+        if (seen.has(value)) {
+            return '[circular]';
+        }
+        seen.add(value);
+
+        try {
+            const keys = Object.keys(value);
+            const result: Record<string, any> = {};
+            for (const key of keys.slice(0, 20)) {
+                try {
+                    const item = value[key];
+                    if (item !== undefined && typeof item !== 'function') {
+                        result[key] = serializeResult(item, depth + 1, seen);
+                    }
+                } catch {
+                    // Skip inaccessible property
+                }
+            }
+            if (Object.keys(result).length > 0) {
+                return result;
+            }
+        } finally {
+            seen.delete(value);
+        }
+    }
+
+    return String(value);
+}
+
 /**
  * SceneScriptToolsV2 — 场景脚本执行工具 v2
  * 合并自 SceneAdvancedTools (scene script + component method 部分)
@@ -66,7 +116,7 @@ export class SceneScriptToolsV2 implements ToolExecutor {
                     });
                     return;
                 }
-                resolve({ success: true, data: result });
+                resolve({ success: true, data: serializeResult(result) });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
             });
@@ -82,7 +132,7 @@ export class SceneScriptToolsV2 implements ToolExecutor {
             }).then((result: any) => {
                 resolve({
                     success: true,
-                    data: { result, message: `Method '${name}' executed successfully` }
+                    data: { result: serializeResult(result), message: `Method '${name}' executed successfully` }
                 });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });

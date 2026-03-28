@@ -13,6 +13,114 @@ function findNodeByUuid(root: any, uuid: string): any {
     return null;
 }
 
+/**
+ * 安全序列化：将引擎对象转换为可跨进程传递的普通数据结构
+ */
+function hasMeaningfulContent(value: any, depth: number = 0): boolean {
+    if (depth > 4) return true;
+    if (value === null || value === undefined) return false;
+
+    const type = typeof value;
+    if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') return true;
+    if (type === 'function') return false;
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) return false;
+        return value.some((item: any) => hasMeaningfulContent(item, depth + 1));
+    }
+
+    if (type === 'object') {
+        const keys = Object.keys(value);
+        if (keys.length === 0) return false;
+        return keys.some((key: string) => hasMeaningfulContent(value[key], depth + 1));
+    }
+
+    return true;
+}
+
+function safeSerialize(value: any, depth: number = 0, seen: WeakSet<object> = new WeakSet()): any {
+    if (depth > 3) return '[max depth]';
+    if (value === null || value === undefined) return value;
+
+    const type = typeof value;
+    if (type === 'number' || type === 'string' || type === 'boolean') return value;
+    if (type === 'bigint') return value.toString();
+    if (type === 'function') return `[Function ${value.name || 'anonymous'}]`;
+
+    if (Array.isArray(value)) {
+        return value.slice(0, 100).map((item: any) => safeSerialize(item, depth + 1, seen));
+    }
+
+    if (type === 'object') {
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return value.valueOf();
+        }
+
+        if (seen.has(value)) {
+            return '[circular]';
+        }
+        seen.add(value);
+
+        try {
+            try {
+                const json = JSON.stringify(value);
+                if (json) {
+                    const parsed = JSON.parse(json);
+                    if (hasMeaningfulContent(parsed)) {
+                        return parsed;
+                    }
+                }
+            } catch {
+                // Circular reference or non-serializable object, continue with manual extraction
+            }
+
+            const result: Record<string, any> = {};
+            const keys = Object.keys(value);
+            const inspectKeys = keys.length > 0
+                ? keys
+                : ['name', 'uuid', 'active', 'position', 'rotation', 'scale', 'x', 'y', 'z', 'w', 'width', 'height', 'r', 'g', 'b', 'a', 'children', 'components', 'parent'];
+
+            for (const key of inspectKeys.slice(0, 20)) {
+                try {
+                    const item = value[key];
+                    if (item !== undefined && typeof item !== 'function') {
+                        result[key] = safeSerialize(item, depth + 1, seen);
+                    }
+                } catch {
+                    // Skip inaccessible property
+                }
+            }
+
+            if (Object.keys(result).length > 0) {
+                return result;
+            }
+
+            try {
+                const primitive = typeof value.valueOf === 'function' ? value.valueOf() : value;
+                if (primitive !== value && (typeof primitive === 'string' || typeof primitive === 'number' || typeof primitive === 'boolean')) {
+                    return primitive;
+                }
+            } catch {
+                // Ignore valueOf failures
+            }
+
+            try {
+                return String(value);
+            } catch {
+                return '[object]';
+            }
+        } finally {
+            seen.delete(value);
+        }
+    }
+
+    return String(value);
+}
+
+function serializeData<T>(value: T): any {
+    return safeSerialize(value);
+}
+
 export const methods: { [key: string]: (...any: any) => any } = {
     /**
      * Create a new scene
@@ -53,7 +161,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 return {
                     success: true,
                     message: `Component ${componentType} added successfully`,
-                    data: { componentId: comp.uuid }
+                    data: serializeData({ componentId: comp.uuid })
                 };
             }
 
@@ -126,7 +234,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
             return { 
                 success: true, 
                 message: `Node ${name} created successfully`,
-                data: { uuid: node.uuid, name: node.name }
+                data: serializeData({ uuid: node.uuid, name: node.name })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -151,7 +259,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
             return {
                 success: true,
-                data: {
+                data: serializeData({
                     uuid: node.uuid,
                     name: node.name,
                     active: node.active,
@@ -164,7 +272,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                         type: comp.constructor.name,
                         enabled: comp.enabled
                     }))
-                }
+                })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -196,7 +304,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
             scene.children.forEach((child: any) => collectNodes(child));
             
-            return { success: true, data: nodes };
+            return { success: true, data: serializeData(nodes) };
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -220,12 +328,12 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
             return {
                 success: true,
-                data: {
+                data: serializeData({
                     uuid: node.uuid,
                     name: node.name,
                     active: node.active,
                     position: node.position
-                }
+                })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -245,11 +353,11 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
             return {
                 success: true,
-                data: {
+                data: serializeData({
                     name: scene.name,
                     uuid: scene.uuid,
                     nodeCount: scene.children.length
-                }
+                })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -357,11 +465,11 @@ export const methods: { [key: string]: (...any: any) => any } = {
             // 真正的预制体创建需要Editor API支持
             return {
                 success: true,
-                data: {
+                data: serializeData({
                     prefabPath: prefabPath,
                     sourceNodeUuid: nodeUuid,
                     message: `Prefab created from node '${node.name}' at ${prefabPath}`
-                }
+                })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -453,12 +561,12 @@ export const methods: { [key: string]: (...any: any) => any } = {
     evalScript(script: string) {
         try {
             const result = new Function('require', 'return ' + script)(require);
-            return { success: true, data: { result } };
+            return { success: true, data: { result: safeSerialize(result) } };
         } catch (e: any) {
-            // 尝试作为语句执行
+            // 语句模式：直接 eval 保留最后一个表达式的完成值
             try {
-                new Function('require', script)(require);
-                return { success: true, data: { result: undefined } };
+                const result = eval(script);
+                return { success: true, data: { result: safeSerialize(result) } };
             } catch (e2: any) {
                 return { success: false, error: e2.message };
             }
@@ -495,7 +603,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
             return {
                 success: true,
-                data: {
+                data: serializeData({
                     nodeCount,
                     activeNodeCount,
                     componentCount,
@@ -503,7 +611,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                     triangles: null,
                     memory: process.memoryUsage ? process.memoryUsage() : null,
                     note: 'drawCalls and triangles are only available at runtime (preview/build)'
-                }
+                })
             };
         } catch (error: any) {
             return { success: false, error: error.message };
@@ -525,7 +633,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
                     allClasses.push(name);
                 }
             }
-            return { success: true, data: { classes: allClasses, count: allClasses.length } };
+            return { success: true, data: serializeData({ classes: allClasses, count: allClasses.length }) };
         } catch (error: any) {
             return { success: false, error: error.message };
         }
