@@ -10,6 +10,7 @@ export class ToolManager {
     constructor() {
         this.settings = this.readToolManagerSettings();
         this.initializeAvailableTools();
+        this.syncConfigurationsWithAvailableTools();
         
         // 如果没有配置，自动创建一个默认配置
         if (this.settings.configurations.length === 0) {
@@ -145,7 +146,8 @@ export class ToolManager {
             { category: 'component', tools: [
                 { name: 'query', description: '查询组件信息' },
                 { name: 'add', description: '添加组件' },
-                { name: 'modify', description: '修改组件属性' }
+                { name: 'modify', description: '修改组件属性' },
+                { name: 'batch_set', description: '批量设置组件属性' }
             ]},
             { category: 'prefab', tools: [
                 { name: 'query', description: '查询预制体信息' },
@@ -196,6 +198,33 @@ export class ToolManager {
         });
 
         console.log(`[ToolManager] Initialized ${this.availableTools.length} default v2 tools`);
+    }
+
+    private syncConfigurationsWithAvailableTools(): void {
+        if (!this.settings.configurations.length || !this.availableTools.length) {
+            return;
+        }
+
+        let changed = false;
+        for (const config of this.settings.configurations) {
+            const existingKeys = new Set(config.tools.map(tool => `${tool.category}_${tool.name}`));
+            let configChanged = false;
+            for (const tool of this.availableTools) {
+                const key = `${tool.category}_${tool.name}`;
+                if (!existingKeys.has(key)) {
+                    config.tools.push({ ...tool, enabled: true });
+                    configChanged = true;
+                    changed = true;
+                }
+            }
+            if (configChanged) {
+                config.updatedAt = new Date().toISOString();
+            }
+        }
+
+        if (changed) {
+            this.saveSettings();
+        }
     }
 
     public getAvailableTools(): ToolConfig[] {

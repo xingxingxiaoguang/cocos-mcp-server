@@ -50,6 +50,24 @@ function serializeToolResult(value: any, depth: number = 0, seen: WeakSet<object
     return String(value);
 }
 
+interface ComponentSetContext {
+    nodeUuid: string;
+    componentType: string;
+    targetComponent: any;
+    availableTypes: string[];
+    rawNodeData: any;
+    rawComponentIndex: number;
+    cidMap: Map<string, string>;
+    componentAliases: Set<string>;
+}
+
+interface PreparedBatchSetContext {
+    nodeUuid: string;
+    componentsResponse: any;
+    rawNodeData: any;
+    cidMap: Map<string, string>;
+}
+
 export class ComponentToolsV2 implements ToolExecutor {
     getTools(): ToolDefinition[] {
         return [
@@ -136,7 +154,7 @@ export class ComponentToolsV2 implements ToolExecutor {
                             enum: [
                                 'string', 'number', 'boolean', 'integer', 'float',
                                 'color', 'vec2', 'vec3', 'size',
-                                'node', 'component', 'spriteFrame', 'prefab', 'asset',
+                                'node', 'component', 'cameraComponent', 'spriteFrame', 'prefab', 'asset',
                                 'nodeArray', 'colorArray', 'numberArray', 'stringArray'
                             ]
                         },
@@ -154,6 +172,43 @@ export class ComponentToolsV2 implements ToolExecutor {
                     },
                     required: ['uuid', 'action']
                 }
+            },
+            {
+                name: 'batch_set',
+                description: 'Set multiple properties on one node in a single call. Shared node/component lookup makes it efficient for many property updates.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        uuid: {
+                            type: 'string',
+                            description: 'Node UUID'
+                        },
+                        batch: {
+                            type: 'array',
+                            description: 'Array of component property groups to set',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    componentType: {
+                                        type: 'string',
+                                        description: 'Target component type'
+                                    },
+                                    properties: {
+                                        type: 'object',
+                                        description: 'Property map. Use raw values for common types, or { value, propertyType } for explicit type control.'
+                                    }
+                                },
+                                required: ['componentType', 'properties']
+                            }
+                        },
+                        continueOnError: {
+                            type: 'boolean',
+                            description: 'Continue processing remaining items after a failure',
+                            default: true
+                        }
+                    },
+                    required: ['uuid', 'batch']
+                }
             }
         ];
     }
@@ -166,6 +221,8 @@ export class ComponentToolsV2 implements ToolExecutor {
                 return await this.handleAdd(args);
             case 'modify':
                 return await this.handleModify(args);
+            case 'batch_set':
+                return await this.batchSetComponentProperties(args);
             default:
                 throw new Error(`Unknown tool: ${toolName}`);
         }
@@ -231,8 +288,10 @@ export class ComponentToolsV2 implements ToolExecutor {
                 return await this.resetComponent(uuid);
             case 'execute':
                 return await this.executeComponentMethod(uuid, args.method, args.args || []);
+            case 'batch_set':
+                return await this.batchSetComponentProperties(args);
             default:
-                return { success: false, error: `Unknown action: ${action}. Must be one of: set, remove, reset, execute` };
+                return { success: false, error: `Unknown action: ${action}. Must be one of: set, remove, reset, execute, batch_set` };
         }
     }
 
@@ -547,7 +606,7 @@ export class ComponentToolsV2 implements ToolExecutor {
         const addedComponent = this.findMatchingComponent(afterComponents, componentType);
 
         if (addedComponent && afterCount >= beforeCount) {
-            return {
+            const response: ToolResponse = {
                 success: true,
                 message: `Component '${componentType}' added successfully`,
                 data: {
@@ -558,10 +617,19 @@ export class ComponentToolsV2 implements ToolExecutor {
                     existing: false
                 }
             };
+
+            if (this.normalizeComponentType(addedComponent.type) === 'cc.Sprite') {
+                const spriteSetup = await this.ensureDefaultSpriteComponentState(nodeUuid);
+                if (spriteSetup.warning) {
+                    response.warning = spriteSetup.warning;
+                }
+            }
+
+            return response;
         }
 
         if (afterCount > beforeCount) {
-            return {
+            const response: ToolResponse = {
                 success: true,
                 message: `Component '${componentType}' added successfully`,
                 data: {
@@ -571,6 +639,15 @@ export class ComponentToolsV2 implements ToolExecutor {
                     existing: false
                 }
             };
+
+            if (this.normalizeComponentType(componentType) === 'cc.Sprite') {
+                const spriteSetup = await this.ensureDefaultSpriteComponentState(nodeUuid);
+                if (spriteSetup.warning) {
+                    response.warning = spriteSetup.warning;
+                }
+            }
+
+            return response;
         }
 
         return {
@@ -747,60 +824,306 @@ export class ComponentToolsV2 implements ToolExecutor {
         });
     }
 
+    private async batchSetComponentProperties(args: any): Promise<ToolResponse> {
+        const { uuid: nodeUuid, batch, continueOnError = true } = args;
+
+        if (!Array.isArray(batch) || batch.length === 0) {
+            return { success: false, error: 'batch must be a non-empty array' };
+        }
+
+        const prepared = await this.prepareBatchSetContext(nodeUuid);
+        if (!prepared.success || !prepared.data) {
+            return prepared;
+        }
+
+        const results: any[] = [];
+        const failures: any[] = [];
+        const contextCache = new Map<string, ComponentSetContext>();
+
+        for (const item of batch) {
+            if (!item || typeof item !== 'object') {
+                const failure = { success: false, error: 'Invalid batch item', item };
+                results.push(failure);
+                failures.push(failure);
+                if (!continueOnError) break;
+                continue;
+            }
+
+            const { componentType, properties } = item;
+            if (!componentType || !properties || typeof properties !== 'object') {
+                const failure = { success: false, error: 'Each batch item must include componentType and properties', item };
+                results.push(failure);
+                failures.push(failure);
+                if (!continueOnError) break;
+                continue;
+            }
+
+            let context = contextCache.get(componentType);
+            if (!context) {
+                const contextResult = this.buildComponentSetContextFromPrepared(prepared.data, componentType);
+                if (!contextResult.success || !contextResult.data) {
+                    results.push(contextResult);
+                    failures.push(contextResult);
+                    if (!continueOnError) break;
+                    continue;
+                }
+                context = contextResult.data;
+                const resolvedContext = context as ComponentSetContext;
+                contextCache.set(componentType, resolvedContext);
+            }
+            const resolvedContext = context as ComponentSetContext;
+
+            for (const [property, rawEntry] of Object.entries(properties)) {
+                const normalized = this.normalizeBatchPropertyEntry(rawEntry);
+                const setResult = await this.applyComponentPropertyWithContext(resolvedContext, {
+                    componentType,
+                    property,
+                    propertyType: normalized.propertyType,
+                    value: normalized.value
+                });
+
+                results.push({
+                    componentType,
+                    property,
+                    propertyType: normalized.propertyType || null,
+                    success: setResult.success,
+                    message: setResult.message,
+                    error: setResult.error,
+                    data: setResult.data,
+                    warning: setResult.warning
+                });
+
+                if (!setResult.success) {
+                    failures.push(setResult);
+                    if (!continueOnError) {
+                        break;
+                    }
+                }
+            }
+
+            if (!continueOnError && failures.length > 0) {
+                break;
+            }
+        }
+
+        if (failures.length > 0) {
+            return {
+                success: false,
+                error: `Batch set completed with ${failures.length} failure(s)`,
+                data: {
+                    nodeUuid,
+                    results,
+                    failures
+                }
+            };
+        }
+
+        return {
+            success: true,
+            message: `Batch set completed for ${results.length} property update(s)`,
+            data: {
+                nodeUuid,
+                results
+            }
+        };
+    }
+
+    private async prepareBatchSetContext(nodeUuid: string): Promise<{ success: true; data: PreparedBatchSetContext } | ToolResponse> {
+        const componentsResponse = await this.getComponents(nodeUuid);
+        if (!componentsResponse.success || !componentsResponse.data) {
+            return {
+                success: false,
+                error: `Failed to get components for node '${nodeUuid}': ${componentsResponse.error}`,
+                instruction: `Please verify that node UUID '${nodeUuid}' is correct.`
+            };
+        }
+
+        let rawNodeData: any;
+        try {
+            rawNodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+        } catch (err: any) {
+            return {
+                success: false,
+                error: `Failed to get raw node data for batch set: ${err.message}`
+            };
+        }
+
+        if (!rawNodeData || !rawNodeData.__comps__) {
+            return { success: false, error: 'Failed to get raw node data for batch set' };
+        }
+
+        const cidMap = await this.buildCidNameMap();
+        return {
+            success: true,
+            data: {
+                nodeUuid,
+                componentsResponse,
+                rawNodeData,
+                cidMap
+            }
+        };
+    }
+
+    private buildComponentSetContextFromPrepared(prepared: PreparedBatchSetContext, componentType: string): { success: true; data: ComponentSetContext } | ToolResponse {
+        const allComponents = prepared.componentsResponse.data.components;
+        const availableTypes: string[] = [];
+        let targetComponent = null;
+        for (let i = 0; i < allComponents.length; i++) {
+            const comp = allComponents[i];
+            availableTypes.push(comp.type);
+            if (comp.type === componentType) {
+                targetComponent = comp;
+                break;
+            }
+        }
+
+        if (!targetComponent) {
+            const instruction = this.generateComponentSuggestion(componentType, availableTypes, '');
+            return {
+                success: false,
+                error: `Component '${componentType}' not found on node. Available components: ${availableTypes.join(', ')}`,
+                instruction
+            };
+        }
+
+        const rawComponentIndex = this.resolveRawComponentIndex(prepared.rawNodeData, componentType, prepared.cidMap);
+        if (rawComponentIndex === -1) {
+            return { success: false, error: 'Could not find component index for setting property' };
+        }
+
+        return {
+            success: true,
+            data: {
+                nodeUuid: prepared.nodeUuid,
+                componentType,
+                targetComponent,
+                availableTypes,
+                rawNodeData: prepared.rawNodeData,
+                rawComponentIndex,
+                cidMap: prepared.cidMap,
+                componentAliases: this.getComponentAliases(componentType, prepared.cidMap)
+            }
+        };
+    }
+
+    private resolveRawComponentIndex(rawNodeData: any, componentType: string, cidMap: Map<string, string>): number {
+        if (!rawNodeData || !Array.isArray(rawNodeData.__comps__)) {
+            return -1;
+        }
+
+        const componentAliases = this.getComponentAliases(componentType, cidMap);
+        for (let i = 0; i < rawNodeData.__comps__.length; i++) {
+            const comp = rawNodeData.__comps__[i] as any;
+            const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
+            const resolved = this.resolveComponentType(rawType, cidMap);
+            const rawTypeNormalized = this.normalizeComponentType(rawType);
+            if (componentAliases.has(rawTypeNormalized) || componentAliases.has(resolved.type)) {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     // ============================================================
     // set_component_property — full migration with complex type conversion
     // ============================================================
 
     private async setComponentProperty(args: any): Promise<ToolResponse> {
-        const { uuid: nodeUuid, componentType, property, propertyType, value } = args;
+        const { uuid: nodeUuid, componentType } = args;
+        const contextResult = args._context
+            ? { success: true, data: args._context }
+            : await this.prepareComponentSetContext(nodeUuid, componentType);
+
+        if (!contextResult.success || !contextResult.data) {
+            return contextResult;
+        }
+
+        return await this.applyComponentPropertyWithContext(contextResult.data, args);
+    }
+
+    private async prepareComponentSetContext(nodeUuid: string, componentType: string): Promise<{ success: true; data: ComponentSetContext } | ToolResponse> {
+        const componentsResponse = await this.getComponents(nodeUuid);
+        if (!componentsResponse.success || !componentsResponse.data) {
+            return {
+                success: false,
+                error: `Failed to get components for node '${nodeUuid}': ${componentsResponse.error}`,
+                instruction: `Please verify that node UUID '${nodeUuid}' is correct.`
+            };
+        }
+
+        const allComponents = componentsResponse.data.components;
+        const availableTypes: string[] = [];
+        let targetComponent = null;
+        for (let i = 0; i < allComponents.length; i++) {
+            const comp = allComponents[i];
+            availableTypes.push(comp.type);
+            if (comp.type === componentType) {
+                targetComponent = comp;
+                break;
+            }
+        }
+
+        if (!targetComponent) {
+            const instruction = this.generateComponentSuggestion(componentType, availableTypes, '');
+            return {
+                success: false,
+                error: `Component '${componentType}' not found on node. Available components: ${availableTypes.join(', ')}`,
+                instruction
+            };
+        }
+
+        let rawNodeData: any;
+        try {
+            rawNodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+        } catch (err: any) {
+            return { success: false, error: `Failed to get raw node data for property setting: ${err.message}` };
+        }
+
+        if (!rawNodeData || !rawNodeData.__comps__) {
+            return { success: false, error: 'Failed to get raw node data for property setting' };
+        }
+
+        const cidMap = await this.buildCidNameMap();
+        const rawComponentIndex = this.resolveRawComponentIndex(rawNodeData, componentType, cidMap);
+        if (rawComponentIndex === -1) {
+            return { success: false, error: 'Could not find component index for setting property' };
+        }
+
+        return {
+            success: true,
+            data: {
+                nodeUuid,
+                componentType,
+                targetComponent,
+                availableTypes,
+                rawNodeData,
+                rawComponentIndex,
+                cidMap,
+                componentAliases: this.getComponentAliases(componentType, cidMap)
+            }
+        };
+    }
+
+    private async applyComponentPropertyWithContext(context: ComponentSetContext, args: any): Promise<ToolResponse> {
+        const { nodeUuid, componentType, targetComponent, rawComponentIndex, cidMap } = context;
+        const { property, propertyType, value } = args;
 
         return new Promise(async (resolve) => {
             try {
                 console.log(`[ComponentToolsV2] Setting ${componentType}.${property} (type: ${propertyType}) = ${JSON.stringify(value)} on node ${nodeUuid}`);
 
-                // Step 0: Detect node property redirect
-                const nodeRedirectResult = await this.checkAndRedirectNodeProperties(args);
+                const nodeRedirectResult = await this.checkAndRedirectNodeProperties({
+                    uuid: nodeUuid,
+                    componentType,
+                    property,
+                    value
+                });
                 if (nodeRedirectResult) {
                     resolve(nodeRedirectResult);
                     return;
                 }
 
-                // Step 1: Get components
-                const componentsResponse = await this.getComponents(nodeUuid);
-                if (!componentsResponse.success || !componentsResponse.data) {
-                    resolve({
-                        success: false,
-                        error: `Failed to get components for node '${nodeUuid}': ${componentsResponse.error}`,
-                        instruction: `Please verify that node UUID '${nodeUuid}' is correct.`
-                    });
-                    return;
-                }
-
-                const allComponents = componentsResponse.data.components;
-
-                // Step 2: Find target component
-                let targetComponent = null;
-                const availableTypes: string[] = [];
-                for (let i = 0; i < allComponents.length; i++) {
-                    const comp = allComponents[i];
-                    availableTypes.push(comp.type);
-                    if (comp.type === componentType) {
-                        targetComponent = comp;
-                        break;
-                    }
-                }
-
-                if (!targetComponent) {
-                    const instruction = this.generateComponentSuggestion(componentType, availableTypes, property);
-                    resolve({
-                        success: false,
-                        error: `Component '${componentType}' not found on node. Available components: ${availableTypes.join(', ')}`,
-                        instruction
-                    });
-                    return;
-                }
-
-                // Step 3: Analyze property
                 let propertyInfo;
                 try {
                     propertyInfo = this.analyzeProperty(targetComponent, property);
@@ -817,11 +1140,11 @@ export class ComponentToolsV2 implements ToolExecutor {
                     return;
                 }
 
-                // Step 4: Process value based on propertyType
                 const originalValue = propertyInfo.originalValue;
+                const effectivePropertyType = this.normalizePropertyType(propertyType, propertyInfo.type, property, value);
                 let processedValue: any;
 
-                switch (propertyType) {
+                switch (effectivePropertyType) {
                     case 'string':
                         processedValue = String(value);
                         break;
@@ -876,10 +1199,11 @@ export class ComponentToolsV2 implements ToolExecutor {
                         }
                         break;
                     case 'component':
+                    case 'cameraComponent':
                         if (typeof value === 'string') {
-                            processedValue = value; // Will be converted to __id__ later
+                            processedValue = value;
                         } else {
-                            throw new Error('Component reference value must be a string (node UUID containing the target component)');
+                            throw new Error('Component reference value must be a string UUID');
                         }
                         break;
                     case 'spriteFrame':
@@ -888,7 +1212,7 @@ export class ComponentToolsV2 implements ToolExecutor {
                         if (typeof value === 'string') {
                             processedValue = { uuid: value };
                         } else {
-                            throw new Error(`${propertyType} value must be a string UUID`);
+                            throw new Error(`${effectivePropertyType} value must be a string UUID`);
                         }
                         break;
                     case 'nodeArray':
@@ -933,48 +1257,20 @@ export class ComponentToolsV2 implements ToolExecutor {
                         }
                         break;
                     default:
-                        throw new Error(`Unsupported property type: ${propertyType}`);
+                        throw new Error(`Unsupported property type: ${effectivePropertyType}`);
                 }
 
                 let actualExpectedValue = processedValue;
-
-                // Step 5: Get raw node data for property path
-                const rawNodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
-                if (!rawNodeData || !rawNodeData.__comps__) {
-                    resolve({ success: false, error: 'Failed to get raw node data for property setting' });
-                    return;
-                }
-
-                const cidMap = await this.buildCidNameMap();
-                const componentAliases = this.getComponentAliases(componentType, cidMap);
-                let rawComponentIndex = -1;
-                for (let i = 0; i < rawNodeData.__comps__.length; i++) {
-                    const comp = rawNodeData.__comps__[i] as any;
-                    const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
-                    const resolved = this.resolveComponentType(rawType, cidMap);
-                    const rawTypeNormalized = this.normalizeComponentType(rawType);
-                    if (componentAliases.has(rawTypeNormalized) || componentAliases.has(resolved.type)) {
-                        rawComponentIndex = i;
-                        break;
-                    }
-                }
-
-                if (rawComponentIndex === -1) {
-                    resolve({ success: false, error: 'Could not find component index for setting property' });
-                    return;
-                }
-
                 let propertyPath = `__comps__.${rawComponentIndex}.${property}`;
 
-                // Special handling for different property types
-                if (propertyType === 'asset' || propertyType === 'spriteFrame' || propertyType === 'prefab' ||
-                    (propertyInfo.type === 'asset' && propertyType === 'string')) {
+                if (effectivePropertyType === 'asset' || effectivePropertyType === 'spriteFrame' || effectivePropertyType === 'prefab' ||
+                    (propertyInfo.type === 'asset' && effectivePropertyType === 'string')) {
                     let assetType = 'cc.SpriteFrame';
                     if (property.toLowerCase().includes('texture')) assetType = 'cc.Texture2D';
                     else if (property.toLowerCase().includes('material')) assetType = 'cc.Material';
                     else if (property.toLowerCase().includes('font')) assetType = 'cc.Font';
                     else if (property.toLowerCase().includes('clip')) assetType = 'cc.AudioClip';
-                    else if (propertyType === 'prefab') assetType = 'cc.Prefab';
+                    else if (effectivePropertyType === 'prefab') assetType = 'cc.Prefab';
 
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath,
@@ -998,7 +1294,7 @@ export class ComponentToolsV2 implements ToolExecutor {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: `__comps__.${rawComponentIndex}.anchorY`, dump: { value: anchorY }
                     });
-                } else if (propertyType === 'color' && processedValue && typeof processedValue === 'object') {
+                } else if (effectivePropertyType === 'color' && processedValue && typeof processedValue === 'object') {
                     const colorValue = {
                         r: Math.min(255, Math.max(0, Number(processedValue.r) || 0)),
                         g: Math.min(255, Math.max(0, Number(processedValue.g) || 0)),
@@ -1008,99 +1304,49 @@ export class ComponentToolsV2 implements ToolExecutor {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath, dump: { value: colorValue, type: 'cc.Color' }
                     });
-                } else if (propertyType === 'vec3' && processedValue && typeof processedValue === 'object') {
+                } else if (effectivePropertyType === 'vec3' && processedValue && typeof processedValue === 'object') {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath,
                         dump: { value: { x: Number(processedValue.x) || 0, y: Number(processedValue.y) || 0, z: Number(processedValue.z) || 0 }, type: 'cc.Vec3' }
                     });
-                } else if (propertyType === 'vec2' && processedValue && typeof processedValue === 'object') {
+                } else if (effectivePropertyType === 'vec2' && processedValue && typeof processedValue === 'object') {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath,
                         dump: { value: { x: Number(processedValue.x) || 0, y: Number(processedValue.y) || 0 }, type: 'cc.Vec2' }
                     });
-                } else if (propertyType === 'size' && processedValue && typeof processedValue === 'object') {
+                } else if (effectivePropertyType === 'size' && processedValue && typeof processedValue === 'object') {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath,
                         dump: { value: { width: Number(processedValue.width) || 0, height: Number(processedValue.height) || 0 }, type: 'cc.Size' }
                     });
-                } else if (propertyType === 'node' && processedValue && typeof processedValue === 'object' && 'uuid' in processedValue) {
+                } else if (effectivePropertyType === 'node' && processedValue && typeof processedValue === 'object' && 'uuid' in processedValue) {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath, dump: { value: processedValue, type: 'cc.Node' }
                     });
-                } else if (propertyType === 'component' && typeof processedValue === 'string') {
-                    // Component reference: find __id__ via node UUID
-                    const targetNodeUuid = processedValue;
-                    let expectedComponentType = '';
-
-                    const currentComponentInfo = await this.getComponentInfo(nodeUuid, componentType);
-                    if (currentComponentInfo.success && currentComponentInfo.data?.properties?.[property]) {
-                        const propertyMeta = currentComponentInfo.data.properties[property];
-                        if (propertyMeta && typeof propertyMeta === 'object') {
-                            if (propertyMeta.type) {
-                                expectedComponentType = propertyMeta.type;
-                            } else if (propertyMeta.ctor) {
-                                expectedComponentType = propertyMeta.ctor;
-                            } else if (propertyMeta.extends && Array.isArray(propertyMeta.extends)) {
-                                for (const extendType of propertyMeta.extends) {
-                                    if (extendType.startsWith('cc.') && extendType !== 'cc.Component' && extendType !== 'cc.Object') {
-                                        expectedComponentType = extendType;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                } else if ((effectivePropertyType === 'component' || effectivePropertyType === 'cameraComponent') && typeof processedValue === 'string') {
+                    let expectedComponentType = effectivePropertyType === 'cameraComponent' ? 'cc.Camera' : '';
+                    const propertyMeta = this.getPropertyMetadata(targetComponent, property);
+                    expectedComponentType = this.inferExpectedComponentType(componentType, property, propertyMeta, expectedComponentType);
 
                     if (!expectedComponentType) {
                         throw new Error(`Unable to determine required component type for property '${property}' on component '${componentType}'.`);
                     }
 
-                    const targetNodeData = await Editor.Message.request('scene', 'query-node', targetNodeUuid);
-                    if (!targetNodeData || !targetNodeData.__comps__) {
-                        throw new Error(`Target node ${targetNodeUuid} not found or has no components`);
+                    const reference = await this.resolveComponentReference(processedValue, expectedComponentType, cidMap);
+                    if (!reference) {
+                        throw new Error(`Unable to resolve component reference '${processedValue}' for property '${property}'.`);
                     }
 
-                    const expectedAliases = this.getComponentAliases(expectedComponentType, cidMap);
-                    let componentId: string | null = null;
-                    for (let i = 0; i < targetNodeData.__comps__.length; i++) {
-                        const comp = targetNodeData.__comps__[i] as any;
-                        const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
-                        const resolved = this.resolveComponentType(rawType, cidMap);
-                        const rawTypeNormalized = this.normalizeComponentType(rawType);
-                        if (expectedAliases.has(rawTypeNormalized) || expectedAliases.has(resolved.type)) {
-                            if (comp.value && comp.value.uuid && comp.value.uuid.value) {
-                                componentId = comp.value.uuid.value;
-                            } else {
-                                throw new Error('Unable to extract component ID from component structure');
-                            }
-                            break;
-                        }
-                    }
-
-                    if (!componentId) {
-                        const availableComponents = targetNodeData.__comps__.map((comp: any, index: number) => {
-                            const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
-                            const resolved = this.resolveComponentType(rawType, cidMap);
-                            let sceneId = 'unknown';
-                            if (comp.value && comp.value.uuid && comp.value.uuid.value) {
-                                sceneId = comp.value.uuid.value;
-                            }
-                            const label = resolved.cid ? `${resolved.type}[${resolved.cid}]` : resolved.type;
-                            return `${label}(scene_id:${sceneId})`;
-                        });
-                        throw new Error(`Component type '${expectedComponentType}' not found on node ${targetNodeUuid}. Available components: ${availableComponents.join(', ')}`);
-                    }
-
-                    actualExpectedValue = { uuid: componentId };
+                    actualExpectedValue = { uuid: reference.componentUuid };
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath,
-                        dump: { value: { uuid: componentId }, type: expectedComponentType }
+                        dump: { value: { uuid: reference.componentUuid }, type: expectedComponentType }
                     });
-                } else if (propertyType === 'nodeArray' && Array.isArray(processedValue)) {
+                } else if (effectivePropertyType === 'nodeArray' && Array.isArray(processedValue)) {
                     await Editor.Message.request('scene', 'set-property', {
                         uuid: nodeUuid, path: propertyPath, dump: { value: processedValue }
                     });
-                } else if (propertyType === 'colorArray' && Array.isArray(processedValue)) {
+                } else if (effectivePropertyType === 'colorArray' && Array.isArray(processedValue)) {
                     const colorArrayValue = processedValue.map((item: any) => {
                         if (item && typeof item === 'object' && 'r' in item) {
                             return {
@@ -1121,7 +1367,6 @@ export class ComponentToolsV2 implements ToolExecutor {
                     });
                 }
 
-                // Step 6: Verify
                 await new Promise(resolve => setTimeout(resolve, 200));
                 const verification = await this.verifyPropertyChange(nodeUuid, componentType, property, originalValue, actualExpectedValue);
 
@@ -1140,6 +1385,322 @@ export class ComponentToolsV2 implements ToolExecutor {
                 resolve({ success: false, error: `Failed to set property: ${error.message}` });
             }
         });
+    }
+
+    private async ensureDefaultSpriteComponentState(nodeUuid: string): Promise<{ warning?: string }> {
+        const warnings: string[] = [];
+        const defaultSpriteFrameUuid = await this.resolveDefaultSpriteFrameUuid();
+
+        if (defaultSpriteFrameUuid) {
+            const spriteFrameResult = await this.setComponentProperty({
+                uuid: nodeUuid,
+                componentType: 'cc.Sprite',
+                action: 'set',
+                property: 'spriteFrame',
+                propertyType: 'spriteFrame',
+                value: defaultSpriteFrameUuid
+            });
+
+            if (!spriteFrameResult.success) {
+                warnings.push(`Failed to assign default SpriteFrame: ${spriteFrameResult.error}`);
+            }
+        } else {
+            warnings.push('Default SpriteFrame asset was not found; Sprite may remain unassigned');
+        }
+
+        const sizeModeResult = await this.setComponentProperty({
+            uuid: nodeUuid,
+            componentType: 'cc.Sprite',
+            action: 'set',
+            property: 'sizeMode',
+            propertyType: 'integer',
+            value: 0
+        });
+
+        if (!sizeModeResult.success) {
+            warnings.push(`Failed to set Sprite sizeMode to CUSTOM: ${sizeModeResult.error}`);
+        }
+
+        return warnings.length > 0 ? { warning: warnings.join('; ') } : {};
+    }
+
+    private async resolveDefaultSpriteFrameUuid(): Promise<string | null> {
+        const candidates = [
+            'db://internal/default_ui/default_sprite.png',
+            'db://internal/default_ui/default_sprite/default_sprite.spriteframe',
+            'db://internal/default_ui/default_sprite',
+            'db://internal/default_ui/default_sprite.spriteframe',
+            'db://internal/default_ui/default_sprite/default_sprite'
+        ];
+
+        for (const candidate of candidates) {
+            try {
+                const assetInfo: any = await Editor.Message.request('asset-db', 'query-asset-info', candidate);
+                if (assetInfo && assetInfo.uuid) {
+                    const resolvedUuid = await this.resolveSpriteFrameUuidFromAssetInfo(assetInfo);
+                    if (resolvedUuid) {
+                        return resolvedUuid;
+                    }
+                }
+            } catch {
+                // Try the next candidate.
+            }
+        }
+
+        const searchPatterns = [
+            'db://internal/**/default_sprite*',
+            'db://internal/**/*default_sprite*.spriteframe',
+            'db://internal/default_ui/**/*spriteframe'
+        ];
+
+        for (const pattern of searchPatterns) {
+            try {
+                const assets: any = await Editor.Message.request('asset-db', 'query-assets', { pattern });
+                if (!Array.isArray(assets)) {
+                    continue;
+                }
+
+                const matched = assets.find((asset: any) => {
+                    const url = String(asset?.url || asset?.path || asset?.name || '').toLowerCase();
+                    const type = String(asset?.type || '').toLowerCase();
+                    return type === 'cc.spriteframe' && url.includes('default_sprite');
+                }) || assets.find((asset: any) => {
+                    const url = String(asset?.url || asset?.path || asset?.name || '').toLowerCase();
+                    return url.includes('default_sprite');
+                });
+
+                if (matched?.uuid) {
+                    return String(matched.uuid);
+                }
+            } catch {
+                // Try the next pattern.
+            }
+        }
+
+        return null;
+    }
+
+    private getPropertyMetadata(component: any, propertyName: string): any | null {
+        if (!component || typeof component !== 'object') {
+            return null;
+        }
+
+        if (component.properties && typeof component.properties === 'object') {
+            if (component.properties.value && typeof component.properties.value === 'object' && component.properties.value[propertyName]) {
+                return component.properties.value[propertyName];
+            }
+            if (component.properties[propertyName]) {
+                return component.properties[propertyName];
+            }
+        }
+
+        if (Object.prototype.hasOwnProperty.call(component, propertyName)) {
+            return component[propertyName];
+        }
+
+        return null;
+    }
+
+    private inferExpectedComponentType(componentType: string, property: string, propertyMeta: any, fallbackType: string): string {
+        let expectedComponentType = fallbackType;
+        if (propertyMeta && typeof propertyMeta === 'object') {
+            if (propertyMeta.type) {
+                expectedComponentType = propertyMeta.type;
+            } else if (propertyMeta.ctor) {
+                expectedComponentType = propertyMeta.ctor;
+            } else if (propertyMeta.extends && Array.isArray(propertyMeta.extends)) {
+                for (const extendType of propertyMeta.extends) {
+                    if (extendType.startsWith('cc.') && extendType !== 'cc.Component' && extendType !== 'cc.Object') {
+                        expectedComponentType = extendType;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!expectedComponentType && property.toLowerCase().includes('component')) {
+            expectedComponentType = 'cc.Component';
+        }
+
+        if (!expectedComponentType && componentType === 'cc.Camera') {
+            expectedComponentType = 'cc.Camera';
+        }
+
+        return expectedComponentType;
+    }
+
+    private async resolveSpriteFrameUuidFromAssetInfo(assetInfo: any): Promise<string | null> {
+        const assetUuid = String(assetInfo?.uuid || '').trim();
+        if (!assetUuid) {
+            return null;
+        }
+
+        const assetType = String(assetInfo?.type || '').toLowerCase();
+        if (assetType === 'cc.spriteframe') {
+            return assetUuid;
+        }
+
+        const subAssets = Array.isArray(assetInfo?.subAssets)
+            ? assetInfo.subAssets
+            : (assetInfo?.subAssets && Array.isArray(assetInfo.subAssets.value) ? assetInfo.subAssets.value : []);
+        if (Array.isArray(subAssets)) {
+            const spriteFrameSubAsset = subAssets.find((subAsset: any) => {
+                const subType = String(subAsset?.type || '').toLowerCase();
+                return subType === 'cc.spriteframe' || subType === 'spriteframe';
+            });
+            if (spriteFrameSubAsset?.uuid) {
+                return String(spriteFrameSubAsset.uuid);
+            }
+        }
+
+        const spriteFrameUuid = `${assetUuid}@f9941`;
+        try {
+            const spriteFrameUrl = await Editor.Message.request('asset-db', 'query-url', spriteFrameUuid);
+            if (spriteFrameUrl) {
+                return spriteFrameUuid;
+            }
+        } catch {
+            // fall back below
+        }
+
+        return null;
+    }
+
+    private normalizeBatchPropertyEntry(entry: any): { value: any; propertyType?: string } {
+        if (entry && typeof entry === 'object' && !Array.isArray(entry) && Object.prototype.hasOwnProperty.call(entry, 'propertyType')) {
+            return {
+                value: Object.prototype.hasOwnProperty.call(entry, 'value') ? entry.value : entry,
+                propertyType: String(entry.propertyType || '')
+            };
+        }
+
+        return { value: entry };
+    }
+
+    private normalizePropertyType(propertyType: string | undefined, inferredType: string, property: string, value: any): string {
+        if (propertyType) {
+            return propertyType === 'cameraComponent' ? 'cameraComponent' : propertyType;
+        }
+
+        if (inferredType === 'asset' && typeof value === 'string' && property.toLowerCase().includes('component')) {
+            return 'component';
+        }
+
+        if (property.toLowerCase().includes('cameracomponent')) {
+            return 'cameraComponent';
+        }
+
+        if (inferredType === 'unknown' && property.toLowerCase().includes('component')) {
+            return 'component';
+        }
+
+        return inferredType;
+    }
+
+    private getComponentUuid(component: any): string | null {
+        return component?.uuid?.value || component?.uuid || component?.value?.uuid?.value || component?.value?.uuid || null;
+    }
+
+    private async collectSceneNodeUuids(): Promise<string[]> {
+        try {
+            const tree = await Editor.Message.request('scene', 'query-node-tree');
+            const nodeUuids = new Set<string>();
+
+            const traverse = (node: any) => {
+                if (!node) {
+                    return;
+                }
+
+                const uuid = node.uuid?.value || node.uuid || node.value?.uuid?.value || node.value?.uuid;
+                if (uuid) {
+                    nodeUuids.add(String(uuid));
+                }
+
+                if (Array.isArray(node.children)) {
+                    for (const child of node.children) {
+                        traverse(child);
+                    }
+                }
+            };
+
+            if (Array.isArray(tree)) {
+                for (const root of tree) {
+                    traverse(root);
+                }
+            } else {
+                traverse(tree);
+            }
+
+            return Array.from(nodeUuids);
+        } catch {
+            return [];
+        }
+    }
+
+    private async resolveComponentReference(referenceUuid: string, expectedComponentType: string, cidMap: Map<string, string>): Promise<{ componentUuid: string; sourceNodeUuid: string; componentType: string } | null> {
+        const expectedAliases = this.getComponentAliases(expectedComponentType, cidMap);
+
+        const matchesExpected = (component: any): boolean => {
+            const rawType = component.__type__ || component.cid || component.type || 'Unknown';
+            const resolved = this.resolveComponentType(rawType, cidMap);
+            const rawTypeNormalized = this.normalizeComponentType(rawType);
+            return expectedAliases.has(rawTypeNormalized) || expectedAliases.has(resolved.type);
+        };
+
+        try {
+            const targetNodeData = await Editor.Message.request('scene', 'query-node', referenceUuid);
+            if (targetNodeData && targetNodeData.__comps__) {
+                for (const comp of targetNodeData.__comps__) {
+                    if (!matchesExpected(comp)) {
+                        continue;
+                    }
+                    const componentUuid = this.getComponentUuid(comp);
+                    if (componentUuid) {
+                        const rawType = (comp as any).__type__ || (comp as any).cid || (comp as any).type || 'Unknown';
+                        const resolved = this.resolveComponentType(rawType, cidMap);
+                        return {
+                            componentUuid,
+                            sourceNodeUuid: referenceUuid,
+                            componentType: resolved.type
+                        };
+                    }
+                }
+            }
+        } catch {
+            // Fall through to scene scan.
+        }
+
+        const nodeUuids = await this.collectSceneNodeUuids();
+        for (const nodeUuid of nodeUuids) {
+            try {
+                const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
+                if (!nodeData || !nodeData.__comps__) {
+                    continue;
+                }
+
+                for (const comp of nodeData.__comps__) {
+                    const componentUuid = this.getComponentUuid(comp);
+                    if (!componentUuid || componentUuid !== referenceUuid) {
+                        continue;
+                    }
+                    if (!matchesExpected(comp)) {
+                        return null;
+                    }
+
+                    const rawType = (comp as any).__type__ || (comp as any).cid || (comp as any).type || 'Unknown';
+                    const resolved = this.resolveComponentType(rawType, cidMap);
+                    return {
+                        componentUuid,
+                        sourceNodeUuid: nodeUuid,
+                        componentType: resolved.type
+                    };
+                }
+            } catch {
+                // Continue scanning remaining nodes.
+            }
+        }
+
+        return null;
     }
 
     // ============================================================
@@ -1386,10 +1947,29 @@ export class ComponentToolsV2 implements ToolExecutor {
                     actualValue = propertyData.value;
                 }
 
+                const extractUuid = (input: any): string => {
+                    if (!input || typeof input !== 'object') {
+                        return '';
+                    }
+                    if (typeof input.uuid === 'string') {
+                        return input.uuid;
+                    }
+                    if (input.uuid && typeof input.uuid === 'object') {
+                        return input.uuid.value || input.uuid.uuid || input.uuid.__uuid__ || '';
+                    }
+                    if (typeof input.__uuid__ === 'string') {
+                        return input.__uuid__;
+                    }
+                    if (input.value && typeof input.value === 'object') {
+                        return extractUuid(input.value);
+                    }
+                    return '';
+                };
+
                 let verified = false;
                 if (typeof expectedValue === 'object' && expectedValue !== null && 'uuid' in expectedValue) {
-                    const actualUuid = actualValue && typeof actualValue === 'object' && 'uuid' in actualValue ? actualValue.uuid : '';
-                    const expectedUuid = expectedValue.uuid || '';
+                    const actualUuid = extractUuid(actualValue);
+                    const expectedUuid = extractUuid(expectedValue) || String(expectedValue.uuid || '');
                     verified = actualUuid === expectedUuid && expectedUuid !== '';
                 } else {
                     if (typeof actualValue === typeof expectedValue) {
