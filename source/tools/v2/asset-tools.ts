@@ -8,6 +8,12 @@ import * as path from 'path';
  * 5 个工具: query, create, modify, delete, refresh
  */
 export class AssetToolsV2 implements ToolExecutor {
+    private static readonly UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    private static readonly TEXT_REFERENCE_EXTENSIONS = [
+        '.scene', '.prefab', '.anim', '.mtl', '.material', '.json', '.ts', '.js',
+        '.txt', '.xml', '.plist', '.fnt', '.shader', '.effect', '.subgraph',
+        '.graph', '.csv', '.md', '.html', '.css'
+    ];
 
     getTools(): ToolDefinition[] {
         return [
@@ -198,17 +204,367 @@ export class AssetToolsV2 implements ToolExecutor {
     }
 
     private async getAssetDependencies(urlOrUUID: string, direction: string = 'dependencies'): Promise<ToolResponse> {
-        return {
-            success: false,
-            error: 'Asset dependency analysis requires additional APIs not available in current Cocos Creator MCP implementation. Consider using the Editor UI for dependency analysis.'
-        };
+        try {
+            const assetInfo = await this.resolveAssetInfo(urlOrUUID);
+            if (!assetInfo) {
+                return { success: false, error: `Asset ${urlOrUUID} not found` };
+            }
+
+            const normalizedDirection = (direction || 'dependencies').toLowerCase();
+            if (!['dependencies', 'dependents', 'both'].includes(normalizedDirection)) {
+                return { success: false, error: `Unknown direction: ${direction}` };
+            }
+
+            const data: any = {
+                uuid: assetInfo.uuid,
+                name: assetInfo.name,
+                path: assetInfo.url,
+                type: assetInfo.type,
+                direction: normalizedDirection
+            };
+
+            if (normalizedDirection === 'dependencies' || normalizedDirection === 'both') {
+                const dependencies = await this.collectAssetDependencies(assetInfo);
+                data.dependencies = dependencies;
+                data.dependencyCount = dependencies.length;
+            }
+
+            if (normalizedDirection === 'dependents' || normalizedDirection === 'both') {
+                const dependents = await this.findAssetDependents(assetInfo.uuid, assetInfo.url);
+                data.dependents = dependents;
+                data.dependentCount = dependents.length;
+            }
+
+            return { success: true, data };
+        } catch (err: any) {
+            return { success: false, error: `Dependency analysis failed: ${err.message}` };
+        }
     }
 
     private async getUnusedAssets(directory: string = 'db://assets', excludeDirectories: string[] = []): Promise<ToolResponse> {
-        return {
-            success: false,
-            error: 'Unused asset detection requires comprehensive project analysis not available in current Cocos Creator MCP implementation. Consider using the Editor UI or third-party tools for unused asset detection.'
-        };
+        try {
+            const scopeDirectory = this.normalizeDbUrl(directory || 'db://assets');
+            const excludeSet = new Set((excludeDirectories || []).map(dir => this.normalizeDbUrl(dir)));
+
+            const allAssetsResponse = await this.listAssets('all', 'db://assets');
+            if (!allAssetsResponse.success || !allAssetsResponse.data?.assets) {
+                return { success: false, error: allAssetsResponse.error || 'Failed to query project assets' };
+            }
+
+            const allAssets = allAssetsResponse.data.assets as any[];
+            const referencedUuids = await this.collectReferencedUuids(allAssets);
+
+            const unused = allAssets.filter((asset: any) => {
+                const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
+                const assetType = String(asset.type || '').toLowerCase();
+                if (!assetUrl || asset.isDirectory) return false;
+                if (!this.isAssetWithinDirectory(assetUrl, scopeDirectory)) return false;
+                if (excludeSet.size > 0) {
+                    for (const excluded of excludeSet) {
+                        if (excluded && this.isAssetWithinDirectory(assetUrl, excluded)) return false;
+                    }
+                }
+                if (!asset.uuid) return false;
+                if (this.shouldSkipForUnusedCheck(assetUrl, assetType)) return false;
+                return !referencedUuids.has(asset.uuid);
+            }).map((asset: any) => ({
+                name: asset.name,
+                uuid: asset.uuid,
+                path: asset.path || asset.url,
+                type: asset.type
+            }));
+
+            return {
+                success: true,
+                data: {
+                    directory: scopeDirectory,
+                    excludeDirectories: Array.from(excludeSet),
+                    totalAssets: allAssets.length,
+                    referencedCount: referencedUuids.size,
+                    unusedCount: unused.length,
+                    unused,
+                    note: 'Basic reference scan across text assets, prefabs and materials. Scripts and scenes are excluded from unused results because scripts are imported and scenes are entry assets.'
+                }
+            };
+        } catch (err: any) {
+            return { success: false, error: `Unused asset detection failed: ${err.message}` };
+        }
+    }
+
+    private async resolveAssetInfo(urlOrUUID: string): Promise<any | null> {
+        const input = String(urlOrUUID || '').trim();
+        if (!input) {
+            return null;
+        }
+
+        const candidates = new Set<string>([this.normalizeDbUrl(input)]);
+        if (!input.startsWith('db://')) {
+            try {
+                const resolvedUrl = await Editor.Message.request('asset-db', 'query-url', input);
+                if (resolvedUrl) {
+                    candidates.add(this.normalizeDbUrl(String(resolvedUrl)));
+                }
+            } catch {
+                // ignore and try direct lookup
+            }
+        }
+
+        for (const candidate of candidates) {
+            try {
+                const assetInfo: any = await Editor.Message.request('asset-db', 'query-asset-info', candidate);
+                if (assetInfo) {
+                    const url = this.normalizeDbUrl(assetInfo.url || assetInfo.path || candidate);
+                    return {
+                        ...assetInfo,
+                        url,
+                        path: url,
+                        name: assetInfo.name || path.basename(url),
+                        type: assetInfo.type || 'unknown'
+                    };
+                }
+            } catch {
+                // try next candidate
+            }
+        }
+
+        return null;
+    }
+
+    private async collectAssetDependencies(assetInfo: any): Promise<any[]> {
+        const references = new Set<string>();
+
+        try {
+            const metaInfo = await this.readAssetMeta(assetInfo.uuid, assetInfo.url);
+            this.collectUuidReferences(metaInfo, references, assetInfo.uuid);
+        } catch {
+            // meta lookup is optional
+        }
+
+        const assetUrl = this.normalizeDbUrl(assetInfo.url || assetInfo.path || '');
+        if (this.shouldScanAssetContent(assetUrl)) {
+            const content = await this.readAssetContent(assetUrl);
+            this.collectUuidReferencesFromText(content, references, assetInfo.uuid);
+        }
+
+        const uuids = Array.from(references);
+        const dependencies: any[] = [];
+        for (const dependencyUuid of uuids.slice(0, 100)) {
+            const dependencyInfo = await this.resolveAssetInfo(dependencyUuid);
+            dependencies.push(dependencyInfo ? {
+                uuid: dependencyInfo.uuid,
+                name: dependencyInfo.name,
+                path: dependencyInfo.url,
+                type: dependencyInfo.type
+            } : { uuid: dependencyUuid });
+        }
+
+        if (uuids.length > 100) {
+            dependencies.push({ truncated: true, remaining: uuids.length - 100 });
+        }
+
+        return dependencies;
+    }
+
+    private async findAssetDependents(targetUuid: string, targetUrl: string): Promise<any[]> {
+        const candidatesResponse = await this.listAssets('all', 'db://assets');
+        if (!candidatesResponse.success || !candidatesResponse.data?.assets) {
+            return [];
+        }
+
+        const candidates = candidatesResponse.data.assets as any[];
+        const dependents: any[] = [];
+        for (const asset of candidates) {
+            if (dependents.length >= 100) {
+                break;
+            }
+
+            const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
+            if (!assetUrl || asset.isDirectory || assetUrl === targetUrl) {
+                continue;
+            }
+            if (!this.shouldScanAssetContent(assetUrl)) {
+                continue;
+            }
+
+            const content = await this.readAssetContent(assetUrl);
+            if (!content) {
+                continue;
+            }
+
+            if (content.includes(targetUuid)) {
+                dependents.push({
+                    name: asset.name,
+                    uuid: asset.uuid,
+                    path: assetUrl,
+                    type: asset.type
+                });
+            }
+        }
+
+        return dependents;
+    }
+
+    private async collectReferencedUuids(assets: any[]): Promise<Set<string>> {
+        const referenced = new Set<string>();
+        for (const asset of assets) {
+            if (!asset || asset.isDirectory) {
+                continue;
+            }
+
+            const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
+            if (!assetUrl || !this.shouldScanAssetContent(assetUrl)) {
+                continue;
+            }
+
+            const content = await this.readAssetContent(assetUrl);
+            this.collectUuidReferencesFromText(content, referenced, asset.uuid);
+
+            try {
+                const metaInfo = await this.readAssetMeta(asset.uuid, assetUrl);
+                this.collectUuidReferences(metaInfo, referenced, asset.uuid);
+            } catch {
+                // ignore unreadable metadata
+            }
+        }
+        return referenced;
+    }
+
+    private async readAssetMeta(uuid: string, assetUrl: string): Promise<any | null> {
+        try {
+            const metaInfo = await Editor.Message.request('asset-db', 'query-asset-meta', uuid);
+            if (metaInfo) {
+                return metaInfo;
+            }
+        } catch {
+            // fallback to disk
+        }
+
+        const metaPath = `${this.dbUrlToFilePath(assetUrl)}.meta`;
+        if (!metaPath || !fs.existsSync(metaPath)) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        } catch {
+            return null;
+        }
+    }
+
+    private async readAssetContent(assetUrl: string): Promise<string | null> {
+        try {
+            const content = await Editor.Message.request('asset-db', 'read-asset', assetUrl);
+            if (typeof content === 'string') {
+                return content;
+            }
+            if (content === null || content === undefined) {
+                return null;
+            }
+            return JSON.stringify(content);
+        } catch {
+            try {
+                const filePath = this.dbUrlToFilePath(assetUrl);
+                if (filePath && fs.existsSync(filePath)) {
+                    return fs.readFileSync(filePath, 'utf8');
+                }
+            } catch {
+                // ignore
+            }
+            return null;
+        }
+    }
+
+    private collectUuidReferences(value: any, target: Set<string>, excludeUuid?: string, seen: WeakSet<object> = new WeakSet(), depth: number = 0): void {
+        if (value === null || value === undefined || depth > 8) {
+            return;
+        }
+
+        if (typeof value === 'string') {
+            this.collectUuidReferencesFromText(value, target, excludeUuid);
+            return;
+        }
+
+        if (typeof value !== 'object') {
+            return;
+        }
+
+        if (seen.has(value)) {
+            return;
+        }
+        seen.add(value);
+
+        try {
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    this.collectUuidReferences(item, target, excludeUuid, seen, depth + 1);
+                }
+                return;
+            }
+
+            for (const item of Object.values(value)) {
+                this.collectUuidReferences(item, target, excludeUuid, seen, depth + 1);
+            }
+        } finally {
+            seen.delete(value);
+        }
+    }
+
+    private collectUuidReferencesFromText(text: string | null, target: Set<string>, excludeUuid?: string): void {
+        if (!text) {
+            return;
+        }
+        const matches = text.match(AssetToolsV2.UUID_PATTERN) || [];
+        for (const match of matches) {
+            if (excludeUuid && match === excludeUuid) {
+                continue;
+            }
+            target.add(match);
+        }
+    }
+
+    private shouldScanAssetContent(assetUrl: string): boolean {
+        const lowerUrl = assetUrl.toLowerCase();
+        return AssetToolsV2.TEXT_REFERENCE_EXTENSIONS.some(ext => lowerUrl.endsWith(ext));
+    }
+
+    private shouldSkipForUnusedCheck(assetUrl: string, assetType: string = ''): boolean {
+        const lowerUrl = assetUrl.toLowerCase();
+        const normalizedType = String(assetType || '').toLowerCase();
+        return lowerUrl.endsWith('.meta')
+            || lowerUrl.endsWith('.ts')
+            || lowerUrl.endsWith('.js')
+            || lowerUrl.endsWith('.scene')
+            || normalizedType.includes('script')
+            || normalizedType.includes('scene');
+    }
+
+    private isAssetWithinDirectory(assetUrl: string, directoryUrl: string): boolean {
+        const normalizedAssetUrl = this.normalizeDbUrl(assetUrl);
+        const normalizedDirectoryUrl = this.normalizeDbUrl(directoryUrl);
+        if (!normalizedAssetUrl || !normalizedDirectoryUrl) {
+            return false;
+        }
+        return normalizedAssetUrl === normalizedDirectoryUrl || normalizedAssetUrl.startsWith(`${normalizedDirectoryUrl}/`);
+    }
+
+    private normalizeDbUrl(value: string): string {
+        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+        if (!normalized) {
+            return '';
+        }
+        if (normalized.startsWith('db://')) {
+            return normalized;
+        }
+        if (normalized.startsWith('assets/')) {
+            return `db://${normalized}`;
+        }
+        return `db://assets/${normalized.replace(/^\/+/, '')}`;
+    }
+
+    private dbUrlToFilePath(assetUrl: string): string {
+        const normalized = this.normalizeDbUrl(assetUrl);
+        const relativePath = normalized.startsWith('db://') ? normalized.replace('db://', '') : normalized;
+        return path.join(Editor.Project.path, relativePath);
     }
 
     private async queryByUuid(uuid: string, includeSubAssets: boolean = true): Promise<ToolResponse> {

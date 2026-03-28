@@ -1147,17 +1147,89 @@ export class ComponentToolsV2 implements ToolExecutor {
     // ============================================================
 
     private extractComponentProperties(component: any): Record<string, any> {
-        if (component.value && typeof component.value === 'object') {
-            return component.value;
-        }
         const properties: Record<string, any> = {};
-        const excludeKeys = ['__type__', 'enabled', 'node', '_id', '__scriptAsset', 'uuid', 'name', '_name', '_objFlags', '_enabled', 'type', 'readonly', 'visible', 'cid', 'editor', 'extends'];
-        for (const key in component) {
-            if (!excludeKeys.includes(key) && !key.startsWith('_')) {
-                properties[key] = component[key];
+        const source = this.getComponentPropertySource(component);
+        if (!source) {
+            return properties;
+        }
+
+        for (const [key, propData] of Object.entries(source)) {
+            if (key.startsWith('_') || this.shouldSkipComponentProperty(key)) {
+                continue;
+            }
+
+            if (!this.isVisibleComponentPropertyDescriptor(propData)) {
+                continue;
+            }
+
+            const descriptor = propData as any;
+            const simplified: any = {};
+
+            if (descriptor.value !== undefined) {
+                simplified.value = serializeToolResult(descriptor.value);
+            }
+
+            const resolvedType = descriptor.type !== undefined ? descriptor.type : descriptor.ctor;
+            if (resolvedType !== undefined) {
+                simplified.type = serializeToolResult(resolvedType);
+            }
+            if (descriptor.ctor !== undefined) {
+                simplified.ctor = serializeToolResult(descriptor.ctor);
+            }
+            if (descriptor.readonly) {
+                simplified.readonly = true;
+            }
+            if (descriptor.enumList !== undefined) {
+                simplified.enumList = serializeToolResult(descriptor.enumList);
+            }
+            if (descriptor.min !== undefined) {
+                simplified.min = descriptor.min;
+            }
+            if (descriptor.max !== undefined) {
+                simplified.max = descriptor.max;
+            }
+            if (descriptor.step !== undefined) {
+                simplified.step = descriptor.step;
+            }
+            if (descriptor.extends !== undefined) {
+                simplified.extends = serializeToolResult(descriptor.extends);
+            }
+
+            if (Object.keys(simplified).length > 0) {
+                properties[key] = simplified;
             }
         }
         return properties;
+    }
+
+    private getComponentPropertySource(component: any): Record<string, any> | null {
+        if (!component || typeof component !== 'object') {
+            return null;
+        }
+
+        if (component.value && typeof component.value === 'object' && !Array.isArray(component.value)) {
+            return component.value;
+        }
+
+        if (component.properties && typeof component.properties === 'object') {
+            if (component.properties.value && typeof component.properties.value === 'object' && !Array.isArray(component.properties.value)) {
+                return component.properties.value;
+            }
+            return component.properties;
+        }
+
+        return component;
+    }
+
+    private shouldSkipComponentProperty(key: string): boolean {
+        return ['__type__', '__prefab', '__scriptAsset', 'enabled', 'node', '_id', 'uuid', 'name', '_name', '_objFlags', '_enabled', 'type', 'readonly', 'visible', 'cid', 'editor', 'extends'].includes(key);
+    }
+
+    private isVisibleComponentPropertyDescriptor(propData: any): boolean {
+        if (typeof propData !== 'object' || propData === null) return false;
+        const descriptor = propData as any;
+        if (descriptor.visible === false) return false;
+        return 'value' in descriptor || 'type' in descriptor || 'ctor' in descriptor || 'readonly' in descriptor;
     }
 
     private isValidPropertyDescriptor(propData: any): boolean {

@@ -80,7 +80,7 @@ export class DebugToolsV2 implements ToolExecutor {
             },
             {
                 name: 'execute',
-                description: 'Execute JavaScript code in scene context.',
+                description: 'Execute JavaScript code in scene context. Returns auto-serialized results. Engine objects (cc.Node, cc.Scene, etc.) are automatically converted to plain objects with common properties extracted. Use require("cc") to access engine APIs.',
                 inputSchema: {
                     type: 'object',
                     properties: {
