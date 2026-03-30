@@ -168,13 +168,11 @@
 |----------|---------|---------|------|
 | `array_property` | `move_array_element` + `remove_array_element` | `uuid: string`; `path: string`; `action: 'move' \| 'remove'`; `index?: number`; `offset?: number` | 操作节点/组件上的数组类型属性 |
 
-### 3.3 新增工具 — 补齐能力缺口（3 个）
+### 3.3 新增工具 — 补齐能力缺口（1 个）
 
 | 新工具名 | 能力缺口 | 参数设计 | 底层实现 |
 |----------|---------|---------|---------|
-| `script_file` | AI 无法读写项目中的 TypeScript 脚本 | `action: 'read' \| 'write' \| 'create' \| 'list'`; `path: string`; `content?: string`; `folder?: string` | `fs.readFileSync/writeFileSync` 操作 `db://assets/` 映射的本地路径，写入后调用 `Editor.Message.request('asset-db', 'refresh-asset', path)` |
-| `animation_clip` | 动画是游戏核心能力，当前完全缺失 | `action: 'create' \| 'get_info' \| 'add_track' \| 'set_keyframe' \| 'list'`; 对应子参数 | 通过 `execute-scene-script` 操作 `cc.AnimationClip` API，或通过 `asset-db` 创建 `.anim` 资源文件 |
-| `material_property` | 无法修改材质 uniform 参数 | `action: 'get_info' \| 'set_property' \| 'set_texture'`; `uuid: string`; `property: string`; `value: any` | 通过 `set-property` 操作 MeshRenderer 的 material 属性链，或通过 `save_asset_meta` 修改 `.mtl` 文件 |
+| `animation_clip` | 动画是游戏核心能力，当前完全缺失 | `action: 'list' \| 'create' \| 'get_info' \| 'list_editable_properties' \| 'add_track' \| 'remove_track' \| 'create_key' \| 'set_keyframe' \| 'remove_key' \| 'query_value_at_frame'`; 对应子参数 | 通过 `scene` 进程中的场景脚本封装编辑器动画 API；必要时在场景脚本内部退回到 `cc.AnimationClip` / `TrackPath` / `RealCurve` |
 
 ### 3.4 工具总数汇总
 
@@ -192,11 +190,9 @@
 | 场景脚本 | 1 |
 | 数组属性 | 1 |
 | **已有合并小计** | **31** |
-| 脚本文件（新增） | 1 |
 | 动画（新增） | 1 |
-| 材质（新增） | 1 |
-| **新增小计** | **3** |
-| **总计** | **34** |
+| **新增小计** | **1** |
+| **总计** | **32** |
 
 ---
 
@@ -334,7 +330,7 @@
   - `source/tools/asset-advanced-tools.ts`
   - （Step 1 已删除的 5 个文件）
 - 修改 `source/tools/tool-manager.ts`:
-  - 更新工具类别列表和默认配置，使其与新的 34 个工具对齐
+  - 更新工具类别列表和默认配置，使其与新的 32 个工具对齐
 - 修改面板 UI（`source/panels/default/`）:
   - 更新工具管理界面的类别显示
 
@@ -351,97 +347,53 @@
 
 ---
 
-### Step 6: 新增能力工具 — script_file / animation_clip / material_property（预计改动量：中）
+### Step 6: 新增能力工具 — animation_clip（预计改动量：中）
 
-**目标**: 实现 3 个新工具，补齐 Cocos Creator 开发的关键能力缺口。
+**目标**: 实现 1 个新工具，补齐动画剪辑编辑能力缺口。
 
 **改动范围**:
-- 新建 `source/tools/v2/script-file-tools.ts`
 - 新建 `source/tools/v2/animation-tools.ts`
-- 新建 `source/tools/v2/material-tools.ts`
 - 修改 `source/mcp-server.ts` 注册新工具
 
-#### 6a: script_file 工具
-
-**实现细节**:
-```typescript
-// action: 'read'
-// 1. 通过 Editor.Project.path 获取项目根路径
-// 2. 将 db://assets/xxx.ts 转换为本地绝对路径
-// 3. fs.readFileSync() 读取文件内容返回
-
-// action: 'write'
-// 1. 路径转换同上
-// 2. fs.writeFileSync() 写入内容
-// 3. Editor.Message.request('asset-db', 'refresh-asset', dbUrl) 刷新资源数据库
-
-// action: 'create'
-// 1. 生成 Cocos Creator 标准组件脚本模板（含 @ccclass 装饰器）
-// 2. 写入文件 + 刷新资源数据库
-
-// action: 'list'
-// 1. Editor.Message.request('asset-db', 'query-assets') 过滤 *.ts 文件
-```
-
-**安全约束**:
-- `path` 参数必须以 `db://assets/` 开头，拒绝访问项目目录外的文件
-- `write` 操作前检查文件是否存在，存在则覆盖（AI 应先 read 再 write）
-- 文件大小限制: 读取上限 1MB，写入上限 500KB
-
-#### 6b: animation_clip 工具
+#### 6a: animation_clip 工具
 
 **实现细节**:
 ```typescript
 // action: 'create'
-// 通过 asset-db 创建 .anim 文件，内容为 Cocos Creator AnimationClip 的 JSON 格式
-// 需要的最小 JSON 结构:
-// { "__type__": "cc.AnimationClip", "_name": "xxx", "_duration": 1.0, "sample": 60, ... }
+// 在 scene.ts 中新增 createAnimationClip(scene method)
+// scene method 内使用 cc.AnimationClip 构造空 clip，设置 name / duration / sample
+// 再通过 asset-db create-asset / save-asset 持久化
 
 // action: 'get_info'
-// 读取 .anim 文件的 JSON 内容，解析并返回轨道、时长、帧率等信息
+// 调用 scene method 获取 clip dump，返回轨道、关键帧、时长、帧率等摘要
 
-// action: 'add_track'
-// 读取 .anim JSON → 添加新轨道到 _tracks 数组 → 写回文件 → 刷新资源
+// action: 'list_editable_properties'
+// 查询当前动画根节点下可创建轨道的属性列表
 
-// action: 'set_keyframe'
-// 读取 .anim JSON → 在指定轨道的指定时间点设置关键帧值 → 写回 → 刷新
+// action: 'add_track' / 'remove_track'
+// 通过 scene.ts 封装编辑器动画 API 创建/删除属性轨道
+
+// action: 'create_key' / 'set_keyframe' / 'remove_key'
+// 通过 scene.ts 封装编辑器动画 API 创建/修改/删除关键帧
+// set_keyframe 内部调用 modifyCurveOfKey 更新插值/切线
 
 // action: 'list'
 // query-assets 过滤 *.anim 文件
+
+// action: 'query_value_at_frame'
+// 查询某轨道在指定帧的求值结果
 ```
 
 **已知限制**:
-- Cocos Creator 3.8 的 AnimationClip JSON 格式较复杂，包含序列化的类型标记（`__type__`）。需要在 Cocos Creator 中手动创建一个示例 .anim 文件，分析其 JSON 结构后再实现。
-- 此工具的 `add_track` 和 `set_keyframe` action 实现复杂度较高，建议 Step 6 先实现 `create`、`get_info`、`list` 三个 action，`add_track` 和 `set_keyframe` 作为后续迭代。
-
-#### 6c: material_property 工具
-
-**实现细节**:
-```typescript
-// action: 'get_info'
-// 1. 通过 uuid 查询材质资源信息
-// 2. 读取 .mtl 文件的 JSON 内容，解析 effect、technique、uniform 列表
-
-// action: 'set_property'
-// 1. 通过 set-property 设置 MeshRenderer 组件的 material 属性链
-//    路径格式: __comps__.{index}.sharedMaterials.{matIndex}.{propertyName}
-// 2. 或者直接修改 .mtl 文件的 JSON 内容中的 _props 字段
-
-// action: 'set_texture'
-// 1. 获取纹理资源的 UUID
-// 2. 通过 set-property 设置材质的纹理属性
-```
-
-**已知限制**:
-- 材质属性的 `set-property` 路径格式需要在 Cocos Creator 中实际测试确认，不同版本可能有差异。
-- 建议 Step 6 先实现 `get_info` action，`set_property` 和 `set_texture` 在确认路径格式后再实现。
+- 编辑类 action 依赖节点上存在可编辑的动画上下文，不能只拿孤立 `.anim` 文件路径完成全部编辑。
+- 外部导入的骨骼动画、部分只读动画资源，不保证支持轨道级编辑。
+- `propKey` 的稳定来源应是编辑器查询结果，不建议由模型自行猜测。
 
 **验证标准**:
 - `npm run build` 编译通过
-- `tools/list` 返回 34 个工具
-- `script_file` 的 read/write/create/list 四个 action 在 Cocos Creator 中实际可用
-- `animation_clip` 的 create/get_info/list 三个 action 在 Cocos Creator 中实际可用
-- `material_property` 的 get_info action 在 Cocos Creator 中实际可用
+- `tools/list` 返回 32 个工具
+- `animation_clip` 的 `list` / `create` / `get_info` 在 Cocos Creator 中实际可用
+- `animation_clip` 的轨道与关键帧编辑 action 在 Cocos Creator 中实际可用
 
 ---
 
@@ -485,9 +437,8 @@ Step 6 (新增能力工具)
 ### 5.3 开发前必须确认的事项
 
 1. **Cocos Creator Editor API 兼容性**: 本方案中所有 `Editor.Message.request()` 调用均基于当前代码中已验证可用的 API。新增工具（Step 6）涉及的 API 需要在目标 Cocos Creator 版本中实际验证:
-   - `asset-db:refresh-asset` — 用于 `script_file` 写入后刷新
-   - `.anim` 文件的 JSON 序列化格式 — 用于 `animation_clip`
-   - `set-property` 对材质属性链的支持深度 — 用于 `material_property`
+   - 编辑器动画查询与编辑接口的可访问性 — 用于 `animation_clip`
+   - `scene.ts` 中通过场景脚本封装动画操作的可行性 — 用于 `animation_clip`
 
 2. **tool-manager.ts 配置迁移策略**: 当前 `tool-manager.ts` 将工具启用/禁用状态持久化到 `<project>/settings/tool-manager.json`。工具名变更后，旧配置将失效。需确认:
    - 是否接受"旧配置自动重置为全部启用"的策略
@@ -539,7 +490,7 @@ curl -s -X POST http://127.0.0.1:8585/mcp \
 各 Step 预期工具数:
 - Step 1 完成后: 111（157 - 46）
 - Step 5 完成后: 31
-- Step 6 完成后: 34
+- Step 6 完成后: 32
 
 #### 6.3.2 工具调用格式验证
 
@@ -631,15 +582,15 @@ curl -s -X POST http://127.0.0.1:8585/mcp \
 
 | 测试用例 | 操作 | 预期结果 |
 |----------|------|---------|
-| SF-1 | `script_file` action=create, path="db://assets/scripts/TestComp.ts" | 生成包含 @ccclass 装饰器的标准脚本模板 |
-| SF-2 | `script_file` action=read, path="db://assets/scripts/TestComp.ts" | 返回脚本文件内容 |
-| SF-3 | `script_file` action=write, path=同上, content=<修改后的内容> | 文件内容更新，资源数据库刷新 |
-| SF-4 | `script_file` action=list, folder="db://assets/scripts/" | 返回该目录下所有 .ts 文件 |
-| SF-5 | `script_file` action=read, path="/etc/passwd" | 返回错误: 路径必须以 db://assets/ 开头 |
-| AN-1 | `animation_clip` action=create, name="walk", duration=1.0 | 生成 .anim 文件 |
-| AN-2 | `animation_clip` action=get_info, path=<AN-1的路径> | 返回动画时长、帧率等信息 |
+| AN-1 | `animation_clip` action=create, savePath="db://assets/anim/walk.anim", name="walk" | 生成空动画剪辑 |
+| AN-2 | `animation_clip` action=get_info, clipUuid=<AN-1结果>, nodeUuid=<动画根节点> | 返回动画时长、帧率、轨道摘要等信息 |
 | AN-3 | `animation_clip` action=list | 返回项目中所有 .anim 文件 |
-| MT-1 | `material_property` action=get_info, uuid=<材质UUID> | 返回材质的 effect、technique、uniform 列表 |
+| AN-4 | `animation_clip` action=list_editable_properties, nodeUuid=<动画根节点>, clipUuid=<clipUuid> | 返回可编辑属性列表 |
+| AN-5 | `animation_clip` action=add_track, nodeUuid=<动画根节点>, clipUuid=<clipUuid>, nodePath="Canvas/Player", propKey=<positionPropKey> | 成功创建轨道 |
+| AN-6 | `animation_clip` action=create_key, ... frame=0, value={x:0,y:0,z:0} | 成功创建关键帧 |
+| AN-7 | `animation_clip` action=set_keyframe, ... frame=30, value={x:100,y:0,z:0} | 成功设置关键帧值 |
+| AN-8 | `animation_clip` action=query_value_at_frame, ... frame=15 | 返回插值结果 |
+| AN-9 | `animation_clip` action=remove_key, ... frames=[30] | 成功删除关键帧 |
 
 ### 6.5 回归验证
 
