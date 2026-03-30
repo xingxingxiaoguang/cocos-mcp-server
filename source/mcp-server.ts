@@ -13,6 +13,7 @@ import { PreferencesToolsV2 } from './tools/v2/preferences-tools';
 import { UndoToolsV2 } from './tools/v2/undo-tools';
 import { SceneScriptToolsV2 } from './tools/v2/scene-script-tools';
 import { ArrayPropertyToolsV2 } from './tools/v2/array-property-tools';
+import { AnimationToolsV2 } from './tools/v2/animation-tools';
 
 export class MCPServer {
     private settings: MCPServerSettings;
@@ -41,6 +42,7 @@ export class MCPServer {
             this.tools.undo = new UndoToolsV2();
             this.tools.sceneScript = new SceneScriptToolsV2();
             this.tools.array = new ArrayPropertyToolsV2();
+            this.tools.animation = new AnimationToolsV2();
             console.log('[MCPServer] V2 tools initialized successfully');
         } catch (error) {
             console.error('[MCPServer] Error initializing v2 tools:', error);
