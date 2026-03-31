@@ -57,12 +57,14 @@
 
 ## 1. 背景
 
+### 1.1 项目背景
+
 当前的问题不是只有 Editor API 魔法字符串分散，而是“工具业务”和“底层 API 对接”仍然混在一起：
 
 - 工具文件里直接写 `Editor.Message.request('scene' | 'asset-db' | 'preferences' | 'builder', ...)`
 - 参数编排、返回值适配、fallback、版本兼容逻辑散落在工具内
 - `scene.ts` 同时承载 scene 注册入口、节点查询、序列化、动画上下文和 Editor/Engine fallback
-- 现有 bridge 如果只做 message wrapper，只能解决“字符串集中”，不能解决 tools 继续膨胀
+- 如果只做 message wrapper，只能解决“字符串集中”，不能解决 tools 继续膨胀
 
 因此本 Step 的核心不是“把 request 换个位置”，而是建立能力分层边界：
 
@@ -73,6 +75,41 @@ tools
       -> drivers
         -> messages
           -> Editor / Engine
+```
+
+### 1.2 目标架构
+
+```
+┌──────────────▼──────────────────────────────────────────┐
+│                 MCP / Tool 入口层                        │
+│  mcp-server.ts                                           │
+│  tools/v2/  ─  只做入参校验 / action 路由 / ToolResponse │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                Application / Use-Case 层                 │
+│  application/use-cases/                                  │
+│  承载工具业务核心逻辑与跨 capability 编排                │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                  Capability / Service 层                 │
+│  capabilities/interfaces  ─  稳定语义能力接口            │
+│  capabilities/services    ─  统一能力服务                │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│            Editor Bridge / Driver / Message 层           │
+│  runtime-profile / capability-registry                   │
+│  drivers/  ─  版本差异 / fallback / Editor 对接          │
+│  messages/ ─  最薄原始 request                           │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                    场景进程层（scene/）                   │
+│  methods  node-registry  animation-context               │
+│  serialization  editor-fallback                          │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
