@@ -1,6 +1,6 @@
 # 架构优化实施总览
 
-> 来源：`doc/plan/architecture-optimization-plan.md` v1.1  
+> 来源：`doc/plan/architecture-optimization-plan.md` v1.2  
 > 目标：把总体架构规划拆成可顺序执行、可验收、可回滚的实施方案  
 > 适用范围：`source/main.ts`、`source/mcp-server.ts`、`source/tools/`、`source/panels/`、`source/scene.ts` 及新增基础设施目录
 
@@ -22,9 +22,9 @@
 | Step 0 | `01-phase-0-ipc-contract-governance.md` | 修复 IPC 契约漂移、注册未实现消息、遗留面板去留 | P0 |
 | Step 1 | `02-phase-1-single-registry-main-process-split.md` | 建立单一工具注册源，拆主进程服务职责 | P0 |
 | Step 2 | `03-phase-2-foundation-modules.md` | 建基础模块：types、serializer、error-codes、schema、base-tool | P1 |
-| Step 3 | `04-phase-3-editor-bridge-scene-split.md` | 收敛 Editor API 调用，拆分 `scene.ts` | P1 |
-| Step 4 | `05-phase-4-tool-migration-prefab-retirement.md` | 分批迁移工具到新基础设施，并退役 prefab v1 | P1-P2 |
-| Step 5 | `06-phase-5-panel-logging-cleanup.md` | 收尾 UI、日志、协议解析、文档规范 | P2 |
+| Step 3 | `04-phase-3-capability-layer-scene-split.md` | 建立 `tools -> use-cases -> capabilities -> drivers -> messages` 分层，并拆分 `scene.ts` | P1 |
+| Step 4 | `05-phase-4-domain-migration-prefab-refactor.md` | 把重型工具迁入 capability/use-case 架构，并退役 prefab legacy 实现 | P1-P2 |
+| Step 5 | `06-phase-5-panel-logging-governance.md` | 让 Panel、日志、协议解析和开发规范与新分层架构对齐 | P2 |
 
 ---
 
@@ -37,11 +37,11 @@ Step 1 单一注册源 + 主进程拆分
   ↓
 Step 2 基础模块建设
   ↓
-Step 3 Editor Bridge + scene 拆分
+Step 3 Capability Layer + scene 拆分
   ↓
-Step 4 工具迁移 + Prefab v1 退役
+Step 4 重型工具迁移 + Prefab legacy 退役
   ↓
-Step 5 Panel / 日志 / 协议收尾
+Step 5 Panel / 日志 / 规范收尾
 ```
 
 关键约束：
@@ -49,8 +49,9 @@ Step 5 Panel / 日志 / 协议收尾
 - Step 0 完成前，不进入大规模面板或服务层改造。
 - Step 1 完成前，不允许继续在 `mcp-server.ts` 和 `tool-manager.ts` 手写新增工具列表。
 - Step 2 完成前，不启动大规模工具类迁移，只能做最小接线验证。
-- Step 3 完成前，禁止继续新增散落的 `Editor.Message.request('scene' | 'asset-db' | ...)`。
+- Step 3 完成前，禁止继续新增散落的 `Editor.Message.request('scene' | 'asset-db' | ...)`，并禁止把版本差异逻辑继续写回 tools。
 - Step 4 完成前，不删除 `source/scene.ts` facade，不删除兼容 re-export。
+- Step 4 期间，重型工具必须通过 `use-case / capability` 迁移，不接受只有 message wrapper 的“伪迁移”。
 
 ---
 
@@ -91,9 +92,9 @@ curl -s -X POST http://127.0.0.1:3000/mcp \
 - Step 0：IPC 参数顺序、状态结构、未实现 message 清理
 - Step 1：工具注册源一致性、配置同步、服务生命周期拆分
 - Step 2：基础模块行为一致性，尤其是 serializer / error-codes / base-tool
-- Step 3：scene 脚本加载稳定性、bridge 接线正确性、低风险工具功能贯通
-- Step 4：各工具迁移不回归，尤其是 prefab v1 退役后的创建 / 实例化 / 回退链路
-- Step 5：默认面板生命周期、请求级日志、严格 JSON 解析与文档同步
+- Step 3：分层骨架稳定、scene facade 加载稳定、低风险领域 capability 试点贯通
+- Step 4：重型工具 use-case / capability 迁移不回归，尤其是 prefab legacy 退役后的创建 / 实例化 / 回退链路
+- Step 5：默认面板生命周期、请求级日志、严格 JSON 解析与开发规范同步
 
 ---
 
@@ -104,9 +105,9 @@ feature/architecture-optimization
   ├── step-0-ipc-contracts
   ├── step-1-registry-services
   ├── step-2-foundation-modules
-  ├── step-3-editor-bridge-scene
-  ├── step-4-tool-migration
-  └── step-5-panel-logging-cleanup
+  ├── step-3-capability-scene
+  ├── step-4-domain-migration
+  └── step-5-panel-logging-governance
 ```
 
 建议做法：
@@ -122,7 +123,8 @@ feature/architecture-optimization
 - `package.json` 已声明 `open-tool-manager`，但当前主进程没有 `openToolManager()` 实现，这是第一优先级止血项。
 - `source/panels/tool-manager/index.ts` 传入 `configId`，而 `source/main.ts` 的 `updateToolStatus()` / `updateToolStatusBatch()` 当前按“隐式当前配置”处理，这必须先统一。
 - `source/mcp-server.ts` 与 `source/tools/tool-manager.ts` 仍各自维护一份工具初始化逻辑，新增 `animation` 后更证明当前不是单一事实来源。
-- `source/tools/v2/prefab-tools.ts` 仍通过 `legacyPrefabTools` 依赖 `source/tools/prefab-tools.ts`，这次迁移必须真正剪掉。
+- 仅有 message wrapper 不足以解决 tools 膨胀，Step 3 起必须按 `use-case / capability / driver` 分层推进。
+- `source/tools/v2/prefab-tools.ts` 仍通过 `legacyPrefabTools` 依赖 `source/tools/prefab-tools.ts`，Step 4 必须真正剪掉。
 
 ---
 
@@ -131,6 +133,6 @@ feature/architecture-optimization
 - `01-phase-0-ipc-contract-governance.md`
 - `02-phase-1-single-registry-main-process-split.md`
 - `03-phase-2-foundation-modules.md`
-- `04-phase-3-editor-bridge-scene-split.md`
-- `05-phase-4-tool-migration-prefab-retirement.md`
-- `06-phase-5-panel-logging-cleanup.md`
+- `04-phase-3-capability-layer-scene-split.md`
+- `05-phase-4-domain-migration-prefab-refactor.md`
+- `06-phase-5-panel-logging-governance.md`

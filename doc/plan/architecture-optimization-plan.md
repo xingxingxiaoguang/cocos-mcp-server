@@ -1,6 +1,6 @@
 # 项目架构优化技术方案
 
-> 版本: 1.1  
+> 版本: 1.2  
 > 日期: 2026-03-31  
 > 目标: 解决随工具数量膨胀带来的可维护性下降问题，建立清晰的分层架构，统一 API 管理、类型体系、错误处理和工具开发规范，并优先收敛 IPC 契约、工具注册源与历史遗留依赖。
 
@@ -144,15 +144,33 @@ return new Promise((resolve) => {
 │  main.ts  ─  薄 IPC facade                               │
 │  services/  ─  server-controller / tool-config-service   │
 │             ─  settings-repository / tool-registry       │
-└──────────────┬─────────────────────────┬────────────────┘
-               │                         │
-┌──────────────▼──────────┐  ┌───────────▼────────────────┐
-│      MCP / Tool 执行层   │  │        Editor Bridge 层     │
-│  mcp-server.ts           │  │  scene / asset-db / prefs  │
-│  tools/v2/               │  │  builder message wrappers  │
-│  base-tool / schemas     │  └───────────┬────────────────┘
-└──────────────┬───────────┘              │
-               │                          │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                 MCP / Tool 入口层                        │
+│  mcp-server.ts                                           │
+│  tools/v2/  ─  只做入参校验 / action 路由 / ToolResponse │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                Application / Use-Case 层                 │
+│  application/use-cases/                                  │
+│  承载工具业务核心逻辑与跨 capability 编排                │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│                  Capability / Service 层                 │
+│  capabilities/interfaces  ─  稳定语义能力接口            │
+│  capabilities/services    ─  统一能力服务                │
+└──────────────┬──────────────────────────────────────────┘
+               │
+┌──────────────▼──────────────────────────────────────────┐
+│            Editor Bridge / Driver / Message 层           │
+│  runtime-profile / capability-registry                   │
+│  drivers/  ─  版本差异 / fallback / Editor 对接          │
+│  messages/ ─  最薄原始 request                           │
+└──────────────┬──────────────────────────────────────────┘
+               │
 ┌──────────────▼──────────────────────────────────────────┐
 │                    场景进程层（scene/）                   │
 │  methods  node-registry  animation-context               │
@@ -184,13 +202,58 @@ source/
 │   ├── config.ts                    # 配置类型（MCPServerSettings、ToolManagerSettings 等）
 │   └── editor.ts                    # Cocos Editor API 返回值类型声明
 │
-├── editor-bridge/                   # ★ 新增：统一 Editor API 封装层
+├── application/                     # ★ 新增：工具业务 use-case 层
+│   └── use-cases/
+│       ├── animation/
+│       ├── preferences/
+│       ├── project/
+│       ├── scene/
+│       ├── asset/
+│       ├── node/
+│       ├── component/
+│       └── prefab/
+│
+├── capabilities/                    # ★ 新增：稳定能力接口与服务
+│   ├── interfaces/
+│   │   ├── animation.ts
+│   │   ├── asset.ts
+│   │   ├── component.ts
+│   │   ├── node.ts
+│   │   ├── preferences.ts
+│   │   ├── project.ts
+│   │   ├── prefab.ts
+│   │   └── scene.ts
+│   └── services/
+│       ├── animation-service.ts
+│       ├── preferences-service.ts
+│       ├── project-service.ts
+│       ├── scene-service.ts
+│       ├── asset-service.ts
+│       ├── node-service.ts
+│       ├── component-service.ts
+│       └── prefab-service.ts
+│
+├── editor-bridge/                   # ★ 新增：runtime profile / drivers / messages
 │   ├── index.ts                     # 统一 re-export
-│   ├── scene-messages.ts            # 'scene' channel 类型化封装
-│   ├── asset-messages.ts            # 'asset-db' channel
-│   ├── preferences-messages.ts      # 'preferences' channel
-│   ├── builder-messages.ts          # 'builder' channel
-│   └── message-constants.ts         # 所有消息名常量
+│   ├── runtime-profile.ts           # 版本能力探测
+│   ├── capability-registry.ts       # capability 与 driver 装配
+│   ├── models.ts                    # bridge 层稳定模型
+│   ├── messages/
+│   │   ├── scene-messages.ts
+│   │   ├── asset-messages.ts
+│   │   ├── preferences-messages.ts
+│   │   ├── builder-messages.ts
+│   │   └── project-messages.ts
+│   └── drivers/
+│       └── cocos-3_8/
+│           ├── animation-driver.ts
+│           ├── asset-driver.ts
+│           ├── component-driver.ts
+│           ├── node-driver.ts
+│           ├── preferences-driver.ts
+│           ├── prefab-driver.ts
+│           ├── project-driver.ts
+│           └── scene-driver.ts
 │
 ├── utils/                           # ★ 新增：跨工具公共工具函数
 │   ├── serializer.ts                # 统一序列化（合并三处实现）
@@ -315,38 +378,54 @@ export const TOOL_REGISTRY: ToolRegistration[] = [
 
 ---
 
-### 3.4 Editor Bridge 层（统一 API 管理）
+### 3.4 Capability / Driver / Message 分层
 
-**目标：** 消除魔法字符串，提供编译期类型安全，集中管理 API 版本兼容处理。
+**目标：** 让 tools 保留工具业务入口，不再关注底层不同版本引擎和 API 变化。
 
-**实现方式：**
+#### 分层边界
+
+- `tools`
+  - 只做 MCP tool 定义、入参校验、action 路由、`ToolResponse`
+- `application/use-cases`
+  - 承载工具业务核心逻辑
+- `capabilities/interfaces`
+  - 对 use-case 暴露稳定语义能力
+- `capabilities/services`
+  - 调度具体 driver，对外提供统一能力实现
+- `editor-bridge/drivers`
+  - 处理版本差异、fallback、底层 Editor/Engine 对接
+- `editor-bridge/messages`
+  - 只保留最薄的 message request 封装
+
+#### 关键原则
+
+- 不接受只有 message wrapper 的“伪抽象”
+- 不允许 tools 继续持有版本判断和 fallback 逻辑
+- capability 方法必须是语义能力，而不是 request 包装
+
+#### 示例
 
 ```typescript
-// source/editor-bridge/message-constants.ts
-export const SCENE_MSG = {
-    QUERY_NODE: 'query-node',
-    SET_PROPERTY: 'set-property',
-    CREATE_NODE: 'create-node',
-} as const;
+interface AnimationCapability {
+    resolveClip(ref: ClipRef): Promise<ResolvedClip>;
+    getClipInfo(ctx: AnimationContext): Promise<AnimationClipInfo>;
+    listEditableProperties(ctx: AnimationContext): Promise<EditableProperty[]>;
+    addTrack(input: AddTrackInput): Promise<TrackInfo>;
+    setKeyframe(input: SetKeyframeInput): Promise<KeyframeResult>;
+    saveClip(ctx: AnimationContext): Promise<SaveResult>;
+}
 ```
 
-```typescript
-// source/editor-bridge/scene-messages.ts
-export const SceneMessages = {
-    async queryNode(uuid: string): Promise<NodeInfo> {
-        return Editor.Message.request('scene', SCENE_MSG.QUERY_NODE, uuid);
-    },
-    async createNode(spec: NodeCreateSpec): Promise<string> {
-        return Editor.Message.request('scene', SCENE_MSG.CREATE_NODE, spec);
-    },
-};
-```
+driver 内部再去决定：
 
-**补充要求：**
+- 用哪个 message
+- 参数顺序如何
+- 是否需要 scene script fallback
+- 是否需要 engine API fallback
 
-- fallback 逻辑统一放在 bridge 中，而不是散落到工具文件
-- bridge 层同时承担“消息名常量”与“返回值适配”职责
-- 只要求核心桥接接口显式类型化，不追求一次性消灭所有 `any`
+#### Runtime Profile
+
+新增 `runtime-profile.ts` 探测当前版本和能力开关，并由 `capability-registry.ts` 选择 driver。
 
 ---
 
@@ -491,9 +570,9 @@ export { methods } from './scene/methods';
 
 ---
 
-### 3.11 Prefab 旧实现退役
+### 3.11 Prefab 旧实现退役与领域化重构
 
-**目标：** 剪除 `source/tools/prefab-tools.ts` 的残余依赖，让 prefab 核心实现真正收敛到 v2。
+**目标：** 剪除 `source/tools/prefab-tools.ts` 的残余依赖，并把 prefab 从“工具内巨型逻辑”重构为独立领域能力。
 
 **现状：**
 
@@ -502,11 +581,9 @@ export { methods } from './scene/methods';
 
 **迁移方案：**
 
-- 将 v1 中 `create_prefab` 的多策略创建逻辑迁移到 `source/tools/v2/prefab-tools.ts`
-- 将 `duplicate_prefab` 的实现迁移到 v2
-- 需要复用的细节逻辑抽到：
-  - `source/tools/services/prefab-service.ts` 或
-  - `source/tools/prefab/prefab-helpers.ts`
+- 定义 `PrefabCapability`
+- 定义 `create / duplicate / instantiate / apply / revert` use-case
+- 由 prefab driver 处理底层 scene / asset / prefab 对接差异
 - 删除 `legacyPrefabTools` 字段与 import
 - 最终删除 `source/tools/prefab-tools.ts`
 
@@ -627,59 +704,56 @@ export { methods } from './scene/methods';
 - 基础模块编译通过
 - 有最小单元测试覆盖 serializer / error-codes / registry 派生结果
 
-### 阶段三：Editor Bridge 与 scene 拆分（优先级 P1）
+### 阶段三：Capability Layer 与 scene 拆分（优先级 P1）
 
-**目标：** 收敛 Editor API 调用，并拆掉 `scene.ts` 的过重职责。
+**目标：** 建立 `tools -> use-cases -> capabilities -> drivers -> messages` 分层骨架，并拆掉 `scene.ts` 的过重职责。
 
 | 任务 | 说明 |
 |------|------|
-| 创建 `editor-bridge/` | scene / asset-db / preferences / builder |
-| 创建 `scene/` 目录结构 | methods + node-registry + animation-context + fallback |
-| 保留 `source/scene.ts` facade | 降低 Cocos 接入风险 |
-| 迁移 fallback 与动画上下文逻辑 | 不再散落在工具中 |
+| 创建 `application/use-cases/` | 低风险领域业务编排试点 |
+| 创建 `capabilities/interfaces` / `services` | 稳定能力接口与统一服务 |
+| 创建 `editor-bridge/runtime-profile.ts` | 版本能力探测 |
+| 创建 `editor-bridge/capability-registry.ts` | capability 与 driver 装配 |
+| 创建 `editor-bridge/messages/` / `drivers/` | message 与版本对接分层 |
+| 创建 `scene/` 目录结构并保留 facade | 降低 Cocos 接入风险 |
+| 迁移 `preferences/project/animation` 试点 | 验证分层模板 |
 
 **验收标准：**
 
-- 主要工具不再直接写 Editor 魔法字符串
-- 场景相关功能手测通过
+- tools 不再直接写 Editor 魔法字符串
+- 低风险工具已通过 use-case / capability 调用
 - 场景入口接入方式稳定，无加载回归
 
-### 阶段四：工具分批迁移与 Prefab 退役（优先级 P1-P2）
+### 阶段四：重型领域迁移与 Prefab 退役（优先级 P1-P2）
 
-**目标：** 逐个工具接入新基础设施，并完成 prefab v1 退役。
+**目标：** 把重型工具迁入 capability / use-case 架构，并完成 prefab legacy 退役。
 
 迁移顺序建议：
 
-| 顺序 | 工具文件 | 重构内容 |
-|------|----------|----------|
-| 1 | `undo-tools.ts` | BaseToolExecutor + async/await |
-| 2 | `array-property-tools.ts` | 同上 |
-| 3 | `scene-script-tools.ts` | 替换序列化与 Promise 包装 |
-| 4 | `preferences-tools.ts` | 接入 editor-bridge |
-| 5 | `project-tools.ts` | 接入 editor-bridge |
-| 6 | `prefab-tools.ts` | 迁移 v1 逻辑，删除 legacy 依赖 |
-| 7 | `animation-tools.ts` | 接入 animation-context |
-| 8 | `debug-tools.ts` | 接入日志与错误码 |
-| 9 | `scene-tools.ts` | 接入 scene bridge |
-| 10 | `asset-tools.ts` | 接入 asset bridge |
-| 11 | `node-tools.ts` | 接入统一 node / scene bridge |
-| 12 | `component-tools.ts` | 最后处理最大复杂度文件 |
+| 顺序 | 领域 | 重构内容 |
+|------|------|----------|
+| 1 | `scene` | `SceneCapability` + use-cases |
+| 2 | `asset` | `AssetCapability` + use-cases |
+| 3 | `node` | `NodeCapability` + use-cases |
+| 4 | `component` | `ComponentCapability` + use-cases |
+| 5 | `prefab` | `PrefabCapability` + use-cases + 删除 legacy |
+| 6 | `debug` / 其他辅助工具 | 接入统一日志与错误码 |
 
 **验收标准：**
 
-- 每迁移一个工具，补对应 smoke test 或手测记录
+- 重型工具通过 use-case / capability 调用
 - `PrefabToolsV2` 不再依赖 v1
 - 全仓无遗留 `legacyPrefabTools`
 
-### 阶段五：Panel、日志与收尾（优先级 P2）
+### 阶段五：Panel、日志与架构治理收尾（优先级 P2）
 
 | 任务 | 说明 |
 |------|------|
 | 默认面板状态治理 | 轮询清理、生命周期收口 |
 | 决定旧 `tool-manager` 面板去留 | 重构或删除 |
-| 在 `mcp-server.ts` 添加统一日志 | 受 `enableDebugLog` 控制 |
+| 在 `mcp-server.ts` 添加统一日志 | 可定位到 tool / use-case / capability / driver |
 | 收紧 JSON 解析策略 | 优先报错而不是自动修复 |
-| 更新 README 与开发规范 | 同步新的注册与开发流程 |
+| 更新 README 与开发规范 | 同步新的分层开发流程 |
 
 ---
 
@@ -689,13 +763,13 @@ export { methods } from './scene/methods';
 |------|------|--------|
 | 主进程 / 面板 IPC 契约 | 运行时漂移，`tsc` 无法发现 | `contracts.ts` 统一约束，关键调用可被测试覆盖 |
 | 工具注册源数量 | 3 份以上 | 1 份（`tool-registry.ts`） |
-| 魔法字符串 API 调用处数 | ~100 处 | 0（全部收敛到 editor-bridge）|
+| tools 中魔法字符串 API 调用处数 | ~100 处 | 0 |
 | 序列化实现数量 | 3 份（行为不一致）| 1 份（统一参数化）|
 | 重复 Promise 包装代码 | ~200 行 | 0 |
 | execute() 分发样板代码 | 12 份 switch 语句 | BaseToolExecutor 统一处理 |
 | prefab 核心实现来源 | v1 / v2 混用 | 全部收敛到 v2 |
 | scene.ts 体积 | 1469 行（单文件）| ~200 行/模块（5 个文件）|
-| 新增工具所需了解文件数 | 5-6 个 | 3-4 个（registry + base-tool + domain types + bridge）|
+| 新增工具所需了解文件数 | 5-6 个 | 4-5 个（tool + use-case + capability + registry + types）|
 | 错误可诊断性 | 仅有 message 字符串 | errorCode + message 分级 |
 
 ---
@@ -706,13 +780,15 @@ export { methods } from './scene/methods';
 
 1. **定义 domain 类型**：在 `source/types/domain.ts` 补充相关接口
 2. **补齐 IPC / 配置类型**：如涉及主进程与面板通信，先更新 `source/ipc/contracts.ts`
-3. **添加 Editor 消息**：在 `source/editor-bridge/` 对应文件添加类型化封装
-4. **创建工具文件**：继承 `BaseToolExecutor`，实现显式 handler map 与 `getTools()`
-5. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
-6. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象
-7. **注册工具**：只在 `source/services/tool-registry.ts` 中注册一次
-8. **场景侧逻辑**：新增到 `source/scene/` 对应模块，而非继续堆进 `scene.ts`
-9. **补最小验证**：至少补一条 registry / contract / smoke test 或手测记录
+3. **定义 capability 接口**：先在 `source/capabilities/interfaces/` 建立稳定能力面
+4. **实现 use-case**：在 `source/application/use-cases/` 写业务编排
+5. **实现 driver / message**：在 `source/editor-bridge/` 处理版本差异与底层 request
+6. **创建工具文件**：继承 `BaseToolExecutor`，只做入口层职责
+7. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
+8. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象
+9. **注册工具**：只在 `source/services/tool-registry.ts` 中注册一次
+10. **场景侧逻辑**：新增到 `source/scene/` 对应模块，而非继续堆进 `scene.ts`
+11. **补最小验证**：至少补一条 registry / contract / smoke test 或手测记录
 
 ---
 
