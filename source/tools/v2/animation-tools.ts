@@ -10,7 +10,8 @@ type AnimationClipAction =
     | 'create_key'
     | 'set_keyframe'
     | 'remove_key'
-    | 'query_value_at_frame';
+    | 'query_value_at_frame'
+    | 'save';
 
 interface ResolvedClipRef {
     clipUuid: string;
@@ -24,7 +25,7 @@ export class AnimationToolsV2 implements ToolExecutor {
         return [
             {
                 name: 'clip',
-                description: 'Manage animation clip assets. action=list: list .anim assets. action=create: create an empty clip. action=get_info/list_editable_properties/add_track/remove_track/create_key/set_keyframe/remove_key/query_value_at_frame: query or edit a clip through the scene animation editor context.',
+                description: 'Manage animation clip assets. action=list: list .anim assets. action=create: create an empty clip. action=get_info/list_editable_properties/add_track/remove_track/create_key/set_keyframe/remove_key/query_value_at_frame: query or edit a clip through the scene animation editor context. action=save: persist in-memory changes to disk (call after finishing edits).',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -40,7 +41,8 @@ export class AnimationToolsV2 implements ToolExecutor {
                                 'create_key',
                                 'set_keyframe',
                                 'remove_key',
-                                'query_value_at_frame'
+                                'query_value_at_frame',
+                                'save'
                             ],
                             description: 'Animation clip action'
                         },
@@ -99,6 +101,8 @@ export class AnimationToolsV2 implements ToolExecutor {
                 return await this.removeKey(args);
             case 'query_value_at_frame':
                 return await this.queryValueAtFrame(args);
+            case 'save':
+                return await this.saveClip(args);
             default:
                 return { success: false, error: `Unknown clip action: ${String(action)}` };
         }
@@ -280,6 +284,21 @@ export class AnimationToolsV2 implements ToolExecutor {
                 args.nodePath,
                 args.propKey,
                 args.frame
+            ]);
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    }
+
+    private async saveClip(args: any): Promise<ToolResponse> {
+        const validation = this.requireNodeAndClipContext(args);
+        if (!validation.success) return validation.response;
+
+        try {
+            const clip = await this.resolveClipRef(args);
+            return await this.callSceneMethod('saveAnimationClip', [
+                args.nodeUuid,
+                clip.clipUuid
             ]);
         } catch (err: any) {
             return { success: false, error: err.message };

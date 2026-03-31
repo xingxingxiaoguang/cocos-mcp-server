@@ -163,7 +163,8 @@
                 "createAnimationKey",
                 "setAnimationKeyframe",
                 "removeAnimationKey",
-                "queryAnimationValueAtFrame"
+                "queryAnimationValueAtFrame",
+                "saveAnimationClip"
             ]
         }
     }

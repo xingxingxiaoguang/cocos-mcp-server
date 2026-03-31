@@ -417,7 +417,47 @@ function getTrackCurves(track: any): any[] {
 }
 
 /**
- * Set a keyframe value via engine API (Defect 4 fix: use _times/_values or addKeyFrame).
+ * Read keyframes from a curve as sorted parallel arrays.
+ */
+function readCurveKeyframes(curve: any): { times: number[]; values: any[] } {
+    const rawTimes = curve._times;
+    const rawValues = curve._values;
+    if (!rawTimes || !rawValues) return { times: [], values: [] };
+    const times: number[] = Array.from(rawTimes);
+    const values: any[] = Array.from(rawValues);
+    return { times, values };
+}
+
+/**
+ * Write keyframes back to a curve using assignSorted (preferred) or direct assignment.
+ * Both times and values must already be sorted by time ascending.
+ */
+function writeCurveKeyframes(curve: any, times: number[], values: any[]): void {
+    if (typeof curve.assignSorted === 'function') {
+        curve.assignSorted(times, values);
+    } else {
+        // Direct assignment fallback
+        if (Array.isArray(curve._times)) {
+            curve._times.length = 0;
+            curve._times.push(...times);
+        }
+        if (Array.isArray(curve._values)) {
+            curve._values.length = 0;
+            curve._values.push(...values);
+        }
+    }
+}
+
+/**
+ * Create a keyframe value object suitable for curve storage.
+ */
+function makeKeyframeValue(v: number): any {
+    return { value: v, leftTangent: 0, rightTangent: 0, interpMode: 0 };
+}
+
+/**
+ * Set a keyframe value via engine API.
+ * Uses sorted insertion to guarantee _times stays in ascending order.
  */
 function engineSetKeyframe(clip: any, nodePath: string, propKey: string, time: number, value: any): void {
     const track = findTrackInClip(clip, nodePath, propKey);
@@ -427,54 +467,59 @@ function engineSetKeyframe(clip: any, nodePath: string, propKey: string, time: n
     if (curves.length === 0) throw new Error(`No curves on track: ${nodePath}/${propKey}`);
 
     // value can be a scalar, {x,y,z}, or array
-    const values = typeof value === 'object' && value !== null
+    const components = typeof value === 'object' && value !== null
         ? [value.x ?? value.r ?? 0, value.y ?? value.g ?? 0, value.z ?? value.b ?? 0, value.w ?? value.a ?? undefined].filter(v => v !== undefined)
         : [typeof value === 'number' ? value : 0];
 
     for (let i = 0; i < curves.length; i++) {
         const curve = curves[i];
-        const v = i < values.length ? values[i] : 0;
+        const v = i < components.length ? components[i] : 0;
+        const { times, values } = readCurveKeyframes(curve);
 
-        if (typeof curve.addKeyFrame === 'function') {
-            // Check if key already exists at this time
-            const times: any[] = curve._times || [];
-            const existingIdx = Array.from(times).findIndex((t: number) => Math.abs(t - time) < 1e-6);
-            if (existingIdx >= 0 && curve._values) {
-                // Update existing key
-                if (typeof curve._values[existingIdx] === 'object' && curve._values[existingIdx] !== null) {
-                    curve._values[existingIdx].value = v;
-                } else {
-                    curve._values[existingIdx] = v;
-                }
-            } else {
-                curve.addKeyFrame(time, { value: v, leftTangent: 0, rightTangent: 0, interpMode: 0 });
-            }
+        // Find existing key at this time, or insertion point
+        const existingIdx = times.findIndex((t: number) => Math.abs(t - time) < 1e-6);
+        if (existingIdx >= 0) {
+            // Update in place
+            values[existingIdx] = makeKeyframeValue(v);
+        } else {
+            // Insert at sorted position
+            let insertIdx = times.findIndex((t: number) => t > time);
+            if (insertIdx < 0) insertIdx = times.length;
+            times.splice(insertIdx, 0, time);
+            values.splice(insertIdx, 0, makeKeyframeValue(v));
         }
+
+        writeCurveKeyframes(curve, times, values);
     }
 }
 
-function engineRemoveKeyframes(clip: any, nodePath: string, propKey: string, times: number[]): number {
+/**
+ * Remove keyframes at specified times from a track.
+ */
+function engineRemoveKeyframes(clip: any, nodePath: string, propKey: string, timesToRemove: number[]): number {
     const track = findTrackInClip(clip, nodePath, propKey);
     if (!track) return 0;
 
     const curves = getTrackCurves(track);
     let removed = 0;
     for (const curve of curves) {
-        if (typeof curve.removeKeyFrame !== 'function') continue;
-        const curveTimes = curve._times;
-        if (!curveTimes || (!Array.isArray(curveTimes) && typeof curveTimes.length !== 'number')) continue;
+        const { times, values } = readCurveKeyframes(curve);
+        if (times.length === 0) continue;
 
-        // Collect indices to remove, then remove from highest index first to avoid shifting
-        const indices: number[] = [];
-        for (const t of times) {
-            const idx = Array.from(curveTimes as ArrayLike<number>).findIndex((ct: number) => Math.abs(ct - t) < 1e-6);
-            if (idx >= 0) indices.push(idx);
+        // Filter out matching times
+        const newTimes: number[] = [];
+        const newValues: any[] = [];
+        for (let i = 0; i < times.length; i++) {
+            const matched = timesToRemove.some((t: number) => Math.abs(times[i] - t) < 1e-6);
+            if (matched) {
+                removed++;
+            } else {
+                newTimes.push(times[i]);
+                newValues.push(values[i]);
+            }
         }
-        indices.sort((a, b) => b - a); // descending
-        for (const idx of indices) {
-            curve.removeKeyFrame(idx);
-            removed++;
-        }
+
+        writeCurveKeyframes(curve, newTimes, newValues);
     }
     return removed;
 }
@@ -523,35 +568,33 @@ function engineQueryValueAtTime(clip: any, nodePath: string, propKey: string, ti
 }
 
 /**
- * Persist clip changes to asset-db (Defect 5 fix: multi-strategy persistence).
+ * Count keyframes on a track from engine memory (avoids stale editor dump).
  */
-async function persistClipChanges(clip: any, clipUuid: string): Promise<void> {
-    // Strategy 1: editor save-clip message
-    try {
-        await requestSceneFacade(SCENE_ANIM_MSG.SAVE_CLIP);
-        return;
-    } catch { /* not in animation edit mode */ }
-
-    // Strategy 2: serialize + asset-db save-asset
-    const serializer = (globalThis as any).EditorExtends?.serialize || (globalThis as any).cce?.Utils?.serialize;
-    if (serializer) {
-        try {
-            const data = serializer(clip);
-            const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
-            const url: string | null = await Editor.Message.request('asset-db', 'query-url', clipUuid);
-            if (url) {
-                await Editor.Message.request('asset-db', 'save-asset', url, content);
-                return;
-            }
-        } catch (e: any) {
-            console.warn('[cocos-mcp-server] clip persist via serialize failed:', e.message);
-        }
-    }
-
-    // Note: refresh-asset re-reads from disk and would overwrite in-memory changes, so we skip it.
-    // If both save-clip and serialize failed, changes exist only in memory until the next scene save.
-    console.warn('[cocos-mcp-server] clip persist: all strategies failed. Changes are in memory only.');
+function engineCountTrackKeyframes(clip: any, nodePath: string, propKey: string): number {
+    const track = findTrackInClip(clip, nodePath, propKey);
+    if (!track) return 0;
+    const curves = getTrackCurves(track);
+    if (curves.length === 0) return 0;
+    const times = curves[0]._times;
+    return times ? (Array.isArray(times) ? times.length : (times.length || 0)) : 0;
 }
+
+/**
+ * Build track summary from engine memory (equivalent to findAnimationCurveSummary output).
+ */
+function engineBuildTrackInfo(clip: any, nodePath: string, propKey: string): any | null {
+    const track = findTrackInClip(clip, nodePath, propKey);
+    if (!track) return null;
+    return {
+        nodePath,
+        propKey,
+        keyframeCount: engineCountTrackKeyframes(clip, nodePath, propKey),
+        type: track.constructor?.name || null,
+        displayName: propKey
+    };
+}
+
+const PERSIST_WARNING = 'Changes are in memory only. Call animation_clip(action=save) to persist, or save the scene in the editor.';
 
 /**
  * Helper: get clip sample rate from assetManager (default 60).
@@ -1020,9 +1063,25 @@ export const methods: { [key: string]: (...any: any) => any } = {
             new Promise((_, reject) => setTimeout(() => reject(new Error('Script timeout (10s)')), TIMEOUT))
         ]);
 
+        /**
+         * Auto-add return for trailing expression statements so that
+         * scripts like `var x = 42; x;` return the value without explicit `return`.
+         * Splits by `;` to handle single-line multi-statement scripts correctly.
+         */
+        const autoReturn = (src: string): string => {
+            if (/\breturn\b/.test(src)) return src;
+            const stmts = src.trimEnd().split(';').map(s => s.trim()).filter(s => s);
+            if (!stmts.length) return src;
+            const lastStmt = stmts[stmts.length - 1];
+            if (/^(var|let|const|if|for|while|switch|try|function|class|throw|do)\b/.test(lastStmt)) return src;
+            if (/[{}]/.test(lastStmt)) return src;
+            stmts[stmts.length - 1] = 'return ' + lastStmt;
+            return stmts.join('; ') + ';';
+        };
+
         // Path 1: wrap in async function (supports return + await)
         try {
-            const wrapped = new Function('require', `return (async () => { ${script} })()`);
+            const wrapped = new Function('require', `return (async () => { ${autoReturn(script)} })()`);
             const result = await withTimeout(wrapped(require));
             return { success: true, data: { result: safeSerialize(result) } };
         } catch (e1: any) {
@@ -1239,6 +1298,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
      */
     async addAnimationTrack(nodeUuid: string, clipUuid: string, nodePath: string, propKey: string) {
         try {
+            let usedEngine = false;
+
             await tryEditorThenEngine(
                 async () => {
                     await runAnimationOperations(nodeUuid, clipUuid, [
@@ -1250,19 +1311,21 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 async () => {
                     const clip = getClipFromAssetManager(clipUuid);
                     engineAddTrack(clip, nodePath, propKey);
-                    await persistClipChanges(clip, clipUuid);
+                    usedEngine = true;
                     return true;
                 }
             );
 
-            const dump = await queryClipDump(nodeUuid, clipUuid);
-            return {
+            // Verify from engine memory (always up-to-date)
+            const clip = getClipFromAssetManager(clipUuid);
+            const trackInfo = engineBuildTrackInfo(clip, nodePath, propKey) || { nodePath, propKey };
+
+            const result: any = {
                 success: true,
-                data: serializeData({
-                    track: dump ? findAnimationCurveSummary(dump, nodePath, propKey) : { nodePath, propKey },
-                    clip: dump ? summarizeAnimationClipDump(dump) : null
-                })
+                data: serializeData({ track: trackInfo })
             };
+            if (usedEngine) result.warning = PERSIST_WARNING;
+            return result;
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -1273,6 +1336,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
      */
     async removeAnimationTrack(nodeUuid: string, clipUuid: string, nodePath: string, propKey: string) {
         try {
+            let usedEngine = false;
+
             await tryEditorThenEngine(
                 async () => {
                     await runAnimationOperations(nodeUuid, clipUuid, [
@@ -1286,19 +1351,17 @@ export const methods: { [key: string]: (...any: any) => any } = {
                     if (!engineRemoveTrack(clip, nodePath, propKey)) {
                         throw new Error(`Track not found: ${nodePath}/${propKey}`);
                     }
-                    await persistClipChanges(clip, clipUuid);
+                    usedEngine = true;
                     return true;
                 }
             );
 
-            const dump = await queryClipDump(nodeUuid, clipUuid);
-            return {
+            const result: any = {
                 success: true,
-                data: serializeData({
-                    removed: { nodePath, propKey },
-                    clip: dump ? summarizeAnimationClipDump(dump) : null
-                })
+                data: serializeData({ removed: { nodePath, propKey } })
             };
+            if (usedEngine) result.warning = PERSIST_WARNING;
+            return result;
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -1311,6 +1374,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
         try {
             const sample = getClipSample(clipUuid);
             const time = frame / sample;
+            let usedEngine = false;
 
             await tryEditorThenEngine(
                 async () => {
@@ -1323,21 +1387,22 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 async () => {
                     const clip = getClipFromAssetManager(clipUuid);
                     engineSetKeyframe(clip, nodePath, propKey, time, value);
-                    await persistClipChanges(clip, clipUuid);
+                    usedEngine = true;
                     return true;
                 }
             );
 
-            const dump = await queryClipDump(nodeUuid, clipUuid);
-            const track = dump ? findAnimationCurveSummary(dump, nodePath, propKey) : null;
-            return {
+            // Verify from engine memory (always up-to-date regardless of write path)
+            const clip = getClipFromAssetManager(clipUuid);
+            const verifiedValue = engineQueryValueAtTime(clip, nodePath, propKey, time);
+            const keyframeCount = engineCountTrackKeyframes(clip, nodePath, propKey);
+
+            const result: any = {
                 success: true,
-                data: serializeData({
-                    frame,
-                    track,
-                    keyframeCount: track?.keyframeCount ?? 0
-                })
+                data: serializeData({ frame, value: verifiedValue, keyframeCount })
             };
+            if (usedEngine) result.warning = PERSIST_WARNING;
+            return result;
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -1358,6 +1423,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
         try {
             const sample = getClipSample(clipUuid);
             const time = frame / sample;
+            let usedEngine = false;
 
             await tryEditorThenEngine(
                 async () => {
@@ -1374,28 +1440,21 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 async () => {
                     const clip = getClipFromAssetManager(clipUuid);
                     engineSetKeyframe(clip, nodePath, propKey, time, value);
-                    await persistClipChanges(clip, clipUuid);
+                    usedEngine = true;
                     return true;
                 }
             );
 
-            // Try to verify via editor API, fall back to engine query
-            const verifiedValueAtFrame = await tryEditorThenEngine(
-                async () => {
-                    await prepareAnimationEditContext(nodeUuid, clipUuid);
-                    return await requestSceneFacade(SCENE_ANIM_MSG.QUERY_VALUE_AT_FRAME, clipUuid, nodePath, propKey, frame);
-                },
-                isValidResult,
-                async () => {
-                    const clip = getClipFromAssetManager(clipUuid);
-                    return engineQueryValueAtTime(clip, nodePath, propKey, time);
-                }
-            );
+            // Verify from engine memory (always up-to-date)
+            const clip = getClipFromAssetManager(clipUuid);
+            const verifiedValueAtFrame = engineQueryValueAtTime(clip, nodePath, propKey, time);
 
-            return {
+            const result: any = {
                 success: true,
                 data: serializeData({ frame, value, curve, verifiedValueAtFrame })
             };
+            if (usedEngine) result.warning = PERSIST_WARNING;
+            return result;
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -1407,6 +1466,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
     async removeAnimationKey(nodeUuid: string, clipUuid: string, nodePath: string, propKey: string, frames: number[]) {
         try {
             const sample = getClipSample(clipUuid);
+            let usedEngine = false;
 
             await tryEditorThenEngine(
                 async () => {
@@ -1420,21 +1480,22 @@ export const methods: { [key: string]: (...any: any) => any } = {
                     const clip = getClipFromAssetManager(clipUuid);
                     const times = frames.map(f => f / sample);
                     engineRemoveKeyframes(clip, nodePath, propKey, times);
-                    await persistClipChanges(clip, clipUuid);
+                    usedEngine = true;
                     return true;
                 }
             );
 
-            const dump = await queryClipDump(nodeUuid, clipUuid);
-            const track = dump ? findAnimationCurveSummary(dump, nodePath, propKey) : null;
-            return {
+            // Verify from engine memory
+            const clip = getClipFromAssetManager(clipUuid);
+            const track = engineBuildTrackInfo(clip, nodePath, propKey);
+            const remainingKeyframeCount = track?.keyframeCount ?? 0;
+
+            const result: any = {
                 success: true,
-                data: serializeData({
-                    removedFrames: frames,
-                    remainingKeyframeCount: track?.keyframeCount ?? 0,
-                    track
-                })
+                data: serializeData({ removedFrames: frames, remainingKeyframeCount, track })
             };
+            if (usedEngine) result.warning = PERSIST_WARNING;
+            return result;
         } catch (error: any) {
             return { success: false, error: error.message };
         }
@@ -1461,6 +1522,49 @@ export const methods: { [key: string]: (...any: any) => any } = {
                 success: true,
                 data: serializeData({ frame, value })
             };
+        } catch (error: any) {
+            return { success: false, error: error.message };
+        }
+    },
+
+    /**
+     * Persist in-memory clip changes to disk.
+     * Call this after finishing a batch of edit operations (add_track, create_key, set_keyframe, remove_key, etc.).
+     *
+     * Strategy 1: editor save-clip (works when animation panel is open).
+     * Strategy 2: serialize + save-asset (always available, triggers reimport —
+     *             safe here because this is the final operation in an editing session).
+     */
+    async saveAnimationClip(nodeUuid: string, clipUuid: string) {
+        try {
+            // Strategy 1: editor save-clip (no reimport side effects)
+            try {
+                await prepareAnimationEditContext(nodeUuid, clipUuid);
+                await requestSceneFacade(SCENE_ANIM_MSG.SAVE_CLIP);
+                return { success: true, data: serializeData({ persisted: true, method: 'editor-save-clip' }) };
+            } catch { /* not in animation edit mode */ }
+
+            // Strategy 2: serialize + save-asset
+            // This triggers reimport which replaces the in-memory clip instance,
+            // but that's acceptable because save is the final step in an editing session.
+            const serializer = (globalThis as any).EditorExtends?.serialize || (globalThis as any).cce?.Utils?.serialize;
+            if (!serializer) {
+                return {
+                    success: false,
+                    error: 'Serializer unavailable. Save the scene manually in the editor to persist changes.'
+                };
+            }
+
+            const clip = getClipFromAssetManager(clipUuid);
+            const data = serializer(clip);
+            const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+            const url: string | null = await Editor.Message.request('asset-db', 'query-url', clipUuid);
+            if (!url) {
+                return { success: false, error: `Cannot resolve asset URL for clip ${clipUuid}` };
+            }
+
+            await Editor.Message.request('asset-db', 'save-asset', url, content);
+            return { success: true, data: serializeData({ persisted: true, method: 'serialize-save-asset', url }) };
         } catch (error: any) {
             return { success: false, error: error.message };
         }
