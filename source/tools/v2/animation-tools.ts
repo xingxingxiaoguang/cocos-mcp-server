@@ -379,8 +379,10 @@ export class AnimationToolsV2 implements ToolExecutor {
         const base = this.requireNodeAndClipContext(args);
         if (!base.success) return base;
 
-        const nodePath = this.requireString(args?.nodePath, 'nodePath');
-        if (!nodePath.success) return nodePath;
+        // nodePath allows empty string (root node), so only check type
+        if (typeof args?.nodePath !== 'string') {
+            return { success: false, response: { success: false, error: 'nodePath is required (use empty string for root node)' } };
+        }
 
         const propKey = this.requireString(args?.propKey, 'propKey');
         if (!propKey.success) return propKey;
