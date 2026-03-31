@@ -298,12 +298,12 @@ rg "new .*ToolsV2|require\\('./v2/" source/mcp-server.ts source/tools/tool-manag
 
 ### 完成标记
 
-- [ ] 已新增 `tool-registry.ts`
-- [ ] 工具注册源只剩 1 份
-- [ ] 已新增 `server-controller.ts`
-- [ ] 已新增 `settings-repository.ts`
-- [ ] 已新增 `tool-config-service.ts`
-- [ ] `main.ts` 不再直接承担业务编排
+- [x] 已新增 `tool-registry.ts`
+- [x] 工具注册源只剩 1 份
+- [x] 已新增 `server-controller.ts`
+- [x] 已新增 `settings-repository.ts`
+- [x] 已新增 `tool-config-service.ts`
+- [x] `main.ts` 不再直接承担业务编排
 
 ---
 

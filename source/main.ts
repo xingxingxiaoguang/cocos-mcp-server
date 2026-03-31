@@ -1,20 +1,12 @@
-import { MCPServer } from './mcp-server';
-import { readSettings, saveSettings } from './settings';
 import { MCPServerSettings } from './types';
 import { ToolManager } from './tools/tool-manager';
 import { ToolStatusUpdate } from './ipc/contracts';
+import { ServerController } from './services/server-controller';
+import { SettingsRepository } from './services/settings-repository';
+import { ToolConfigService } from './services/tool-config-service';
 
-let mcpServer: MCPServer | null = null;
+let serverController: ServerController;
 let toolManager: ToolManager;
-
-function syncEnabledToolsToServer(): void {
-    if (!mcpServer) {
-        return;
-    }
-
-    const enabledTools = toolManager.getEnabledTools();
-    mcpServer.updateEnabledTools(enabledTools);
-}
 
 /**
  * @en Registration method for the main process of Extension
@@ -36,12 +28,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @zh 启动 MCP 服务器
      */
     async startServer() {
-        if (mcpServer) {
-            syncEnabledToolsToServer();
-            await mcpServer.start();
-        } else {
-            console.warn('[MCP插件] mcpServer 未初始化');
-        }
+        await serverController.start();
     },
 
     /**
@@ -49,11 +36,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @zh 停止 MCP 服务器
      */
     async stopServer() {
-        if (mcpServer) {
-            mcpServer.stop();
-        } else {
-            console.warn('[MCP插件] mcpServer 未初始化');
-        }
+        serverController.stop();
     },
 
     /**
@@ -61,8 +44,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @zh 获取服务器状态
      */
     getServerStatus() {
-        const status = mcpServer ? mcpServer.getStatus() : { running: false, port: 0, clients: 0 };
-        const settings = mcpServer ? mcpServer.getSettings() : readSettings();
+        const status = serverController.getStatus();
+        const settings = serverController.getSettings();
         return {
             ...status,
             settings: settings
@@ -73,16 +56,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @en Update server settings
      * @zh 更新服务器设置
      */
-    updateSettings(settings: MCPServerSettings) {
-        saveSettings(settings);
-        if (mcpServer) {
-            mcpServer.stop();
-            mcpServer = new MCPServer(settings);
-            mcpServer.start();
-        } else {
-            mcpServer = new MCPServer(settings);
-            mcpServer.start();
-        }
+    async updateSettings(settings: MCPServerSettings) {
+        await serverController.updateSettings(settings);
     },
 
     /**
@@ -90,7 +65,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @zh 获取工具列表
      */
     getToolsList() {
-        return mcpServer ? mcpServer.getAvailableTools() : [];
+        return serverController.getAvailableTools();
     },
 
     /**
@@ -98,7 +73,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
      * @zh 获取服务器设置
      */
     async getServerSettings() {
-        return mcpServer ? mcpServer.getSettings() : readSettings();
+        return serverController.getSettings();
     },
 
     // 工具管理器相关方法
@@ -109,6 +84,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
     async createToolConfiguration(name: string, description?: string) {
         try {
             const config = toolManager.createConfiguration(name, description);
+            serverController.syncEnabledTools();
             return { success: true, id: config.id, config };
         } catch (error: any) {
             throw new Error(`创建配置失败: ${error.message}`);
@@ -117,7 +93,9 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
     async updateToolConfiguration(configId: string, updates: any) {
         try {
-            return toolManager.updateConfiguration(configId, updates);
+            const config = toolManager.updateConfiguration(configId, updates);
+            serverController.syncEnabledTools();
+            return config;
         } catch (error: any) {
             throw new Error(`更新配置失败: ${error.message}`);
         }
@@ -126,6 +104,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
     async deleteToolConfiguration(configId: string) {
         try {
             toolManager.deleteConfiguration(configId);
+            serverController.syncEnabledTools();
             return { success: true };
         } catch (error: any) {
             throw new Error(`删除配置失败: ${error.message}`);
@@ -135,6 +114,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
     async setCurrentToolConfiguration(configId: string) {
         try {
             toolManager.setCurrentConfiguration(configId);
+            serverController.syncEnabledTools();
             return { success: true };
         } catch (error: any) {
             throw new Error(`设置当前配置失败: ${error.message}`);
@@ -144,7 +124,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
     async updateToolStatus(configId: string, category: string, toolName: string, enabled: boolean) {
         try {
             toolManager.updateToolStatus(configId, category, toolName, enabled);
-            syncEnabledToolsToServer();
+            serverController.syncEnabledTools();
             return { success: true };
         } catch (error: any) {
             throw new Error(`更新工具状态失败: ${error.message}`);
@@ -153,10 +133,8 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
     async updateToolStatusBatch(configId: string, updates: ToolStatusUpdate[]) {
         try {
-            console.log(`[Main] updateToolStatusBatch called with updates count:`, updates ? updates.length : 0);
-
             toolManager.updateToolStatusBatch(configId, updates);
-            syncEnabledToolsToServer();
+            serverController.syncEnabledTools();
             return { success: true };
         } catch (error: any) {
             throw new Error(`批量更新工具状态失败: ${error.message}`);
@@ -173,7 +151,9 @@ export const methods: { [key: string]: (...any: any) => any } = {
 
     async importToolConfiguration(configJson: string) {
         try {
-            return toolManager.importConfiguration(configJson);
+            const config = toolManager.importConfiguration(configJson);
+            serverController.syncEnabledTools();
+            return config;
         } catch (error: any) {
             throw new Error(`导入配置失败: ${error.message}`);
         }
@@ -190,20 +170,14 @@ export const methods: { [key: string]: (...any: any) => any } = {
  */
 export function load() {
     console.log('Cocos MCP Server extension loaded');
-    
-    // 初始化工具管理器
-    toolManager = new ToolManager();
-    
-    // 读取设置
-    const settings = readSettings();
-    mcpServer = new MCPServer(settings);
-    
-    // 初始化MCP服务器的工具列表
-    syncEnabledToolsToServer();
-    
-    // 如果设置了自动启动，则启动服务器
-    if (settings.autoStart) {
-        mcpServer.start().catch(err => {
+
+    const settingsRepository = new SettingsRepository();
+    const toolConfigService = new ToolConfigService(settingsRepository);
+    toolManager = new ToolManager(toolConfigService);
+    serverController = new ServerController(settingsRepository, toolConfigService);
+
+    if (serverController.getSettings().autoStart) {
+        serverController.start().catch(err => {
             console.error('Failed to auto-start MCP server:', err);
         });
     }
@@ -214,8 +188,5 @@ export function load() {
  * @zh 卸载扩展时触发的方法
  */
 export function unload() {
-    if (mcpServer) {
-        mcpServer.stop();
-        mcpServer = null;
-    }
+    serverController?.stop();
 }

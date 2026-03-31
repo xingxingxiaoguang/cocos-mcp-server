@@ -1,48 +1,26 @@
 import * as http from 'http';
 import * as url from 'url';
-import { v4 as uuidv4 } from 'uuid';
-import { MCPServerSettings, ServerStatus, MCPClient, ToolDefinition } from './types';
-import { SceneToolsV2 } from './tools/v2/scene-tools';
-import { NodeToolsV2 } from './tools/v2/node-tools';
-import { ComponentToolsV2 } from './tools/v2/component-tools';
-import { PrefabToolsV2 } from './tools/v2/prefab-tools';
-import { AssetToolsV2 } from './tools/v2/asset-tools';
-import { DebugToolsV2 } from './tools/v2/debug-tools';
-import { ProjectToolsV2 } from './tools/v2/project-tools';
-import { PreferencesToolsV2 } from './tools/v2/preferences-tools';
-import { UndoToolsV2 } from './tools/v2/undo-tools';
-import { SceneScriptToolsV2 } from './tools/v2/scene-script-tools';
-import { ArrayPropertyToolsV2 } from './tools/v2/array-property-tools';
-import { AnimationToolsV2 } from './tools/v2/animation-tools';
+import { MCPServerSettings, ServerStatus, MCPClient, ToolConfig, ToolDefinition, ToolExecutor } from './types';
+import { createToolDefinitions, createToolExecutors } from './services/tool-registry';
 
 export class MCPServer {
     private settings: MCPServerSettings;
     private httpServer: http.Server | null = null;
     private clients: Map<string, MCPClient> = new Map();
-    private tools: Record<string, any> = {};
+    private tools: Record<string, ToolExecutor> = {};
     private toolsList: ToolDefinition[] = [];
-    private enabledTools: any[] = []; // 存储启用的工具列表
+    private enabledTools: ToolConfig[] = [];
 
     constructor(settings: MCPServerSettings) {
         this.settings = settings;
         this.initializeTools();
+        this.setupTools();
     }
 
     private initializeTools(): void {
         try {
             console.log('[MCPServer] Initializing v2 tools...');
-            this.tools.scene = new SceneToolsV2();
-            this.tools.node = new NodeToolsV2();
-            this.tools.component = new ComponentToolsV2();
-            this.tools.prefab = new PrefabToolsV2();
-            this.tools.asset = new AssetToolsV2();
-            this.tools.debug = new DebugToolsV2();
-            this.tools.project = new ProjectToolsV2();
-            this.tools.preferences = new PreferencesToolsV2();
-            this.tools.undo = new UndoToolsV2();
-            this.tools.sceneScript = new SceneScriptToolsV2();
-            this.tools.array = new ArrayPropertyToolsV2();
-            this.tools.animation = new AnimationToolsV2();
+            this.tools = createToolExecutors();
             console.log('[MCPServer] V2 tools initialized successfully');
         } catch (error) {
             console.error('[MCPServer] Error initializing v2 tools:', error);
@@ -85,49 +63,12 @@ export class MCPServer {
     }
 
     private setupTools(): void {
-        this.toolsList = [];
-        
-        // 如果没有启用工具配置，返回所有工具
-        if (!this.enabledTools || this.enabledTools.length === 0) {
-            for (const [category, toolSet] of Object.entries(this.tools)) {
-                const tools = toolSet.getTools();
-                for (const tool of tools) {
-                    this.toolsList.push({
-                        name: `${category}_${tool.name}`,
-                        description: tool.description,
-                        inputSchema: tool.inputSchema
-                    });
-                }
-            }
-        } else {
-            // 根据启用的工具配置过滤
-            const enabledToolNames = new Set(this.enabledTools.map(tool => `${tool.category}_${tool.name}`));
-            
-            for (const [category, toolSet] of Object.entries(this.tools)) {
-                const tools = toolSet.getTools();
-                for (const tool of tools) {
-                    const toolName = `${category}_${tool.name}`;
-                    if (enabledToolNames.has(toolName)) {
-                        this.toolsList.push({
-                            name: toolName,
-                            description: tool.description,
-                            inputSchema: tool.inputSchema
-                        });
-                    }
-                }
-            }
-        }
-        
+        this.toolsList = createToolDefinitions(this.enabledTools, this.tools);
         console.log(`[MCPServer] Setup tools: ${this.toolsList.length} tools available`);
     }
 
-    public getFilteredTools(enabledTools: any[]): ToolDefinition[] {
-        if (!enabledTools || enabledTools.length === 0) {
-            return this.toolsList; // 如果没有过滤配置，返回所有工具
-        }
-
-        const enabledToolNames = new Set(enabledTools.map(tool => `${tool.category}_${tool.name}`));
-        return this.toolsList.filter(tool => enabledToolNames.has(tool.name));
+    public getFilteredTools(enabledTools: ToolConfig[]): ToolDefinition[] {
+        return createToolDefinitions(enabledTools, this.tools);
     }
 
     public async executeToolCall(toolName: string, args: any): Promise<any> {
@@ -149,7 +90,7 @@ export class MCPServer {
         return this.toolsList;
     }
 
-    public updateEnabledTools(enabledTools: any[]): void {
+    public updateEnabledTools(enabledTools: ToolConfig[]): void {
         console.log(`[MCPServer] Updating enabled tools: ${enabledTools.length} tools`);
         this.enabledTools = enabledTools;
         this.setupTools(); // 重新设置工具列表
