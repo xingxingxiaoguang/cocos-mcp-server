@@ -1,5 +1,7 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, PrefabInfo } from '../../types';
+import { PrefabInfo } from '../../types/domain';
+import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types/mcp';
 import { PrefabTools } from '../prefab-tools';
+import { actionEnum, dbPath as dbPathSchema, uuid as uuidSchema } from '../schemas/common';
 
 export class PrefabToolsV2 implements ToolExecutor {
     private legacyPrefabTools = new PrefabTools();
@@ -13,11 +15,11 @@ export class PrefabToolsV2 implements ToolExecutor {
                     type: 'object',
                     properties: {
                         prefabPath: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Prefab path, e.g. db://assets/prefabs/Player.prefab'
                         },
                         folder: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Restrict search to this folder (only when listing)',
                             default: 'db://assets'
                         }
@@ -31,17 +33,15 @@ export class PrefabToolsV2 implements ToolExecutor {
                     type: 'object',
                     properties: {
                         action: {
-                            type: 'string',
-                            enum: ['from_node', 'instantiate', 'duplicate'],
-                            description: 'Operation type'
+                            ...actionEnum(['from_node', 'instantiate', 'duplicate'], 'Operation type')
                         },
                         // from_node params
                         uuid: {
-                            type: 'string',
+                            ...uuidSchema,
                             description: 'Source node UUID (action=from_node)'
                         },
                         savePath: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Save path for new prefab (action=from_node), e.g. db://assets/prefabs/MyPrefab.prefab'
                         },
                         prefabName: {
@@ -50,11 +50,11 @@ export class PrefabToolsV2 implements ToolExecutor {
                         },
                         // instantiate params
                         prefabPath: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Prefab path (action=instantiate)'
                         },
                         parentUuid: {
-                            type: 'string',
+                            ...uuidSchema,
                             description: 'Parent node UUID (action=instantiate)'
                         },
                         name: {
@@ -72,11 +72,11 @@ export class PrefabToolsV2 implements ToolExecutor {
                         },
                         // duplicate params
                         sourcePath: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Source prefab path (action=duplicate)'
                         },
                         targetPath: {
-                            type: 'string',
+                            ...dbPathSchema,
                             description: 'Target path (action=duplicate)'
                         }
                     },
@@ -90,16 +90,17 @@ export class PrefabToolsV2 implements ToolExecutor {
                     type: 'object',
                     properties: {
                         action: {
-                            type: 'string',
-                            enum: ['apply', 'revert'],
-                            description: 'apply=save changes to prefab asset, revert=restore instance to original state'
+                            ...actionEnum(
+                                ['apply', 'revert'],
+                                'apply=save changes to prefab asset, revert=restore instance to original state',
+                            )
                         },
                         uuid: {
-                            type: 'string',
+                            ...uuidSchema,
                             description: 'Prefab instance node UUID'
                         },
                         assetUuid: {
-                            type: 'string',
+                            ...uuidSchema,
                             description: 'Prefab asset UUID (optional, for revert with restore-prefab API)'
                         }
                     },

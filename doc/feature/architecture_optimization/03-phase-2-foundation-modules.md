@@ -291,12 +291,12 @@ npm run build
 
 ### 完成标记
 
-- [ ] 已拆分 `source/types/`
-- [ ] 已新增 `serializer.ts`
-- [ ] 已新增 `error-codes.ts`
-- [ ] 已新增 `schemas/common.ts`
-- [ ] 已新增 `base-tool.ts`
-- [ ] 基础模块存在最小测试或 smoke 验证
+- [x] 已拆分 `source/types/`
+- [x] 已新增 `serializer.ts`
+- [x] 已新增 `error-codes.ts`
+- [x] 已新增 `schemas/common.ts`
+- [x] 已新增 `base-tool.ts`
+- [x] 基础模块存在最小测试或 smoke 验证
 
 ---
 

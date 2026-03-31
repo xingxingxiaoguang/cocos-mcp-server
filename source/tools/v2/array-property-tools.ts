@@ -1,4 +1,7 @@
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
+import { ToolDefinition, ToolResponse } from '../../types/mcp';
+import { makeError, ToolErrorCode } from '../../utils/error-codes';
+import { BaseToolExecutor } from '../base-tool';
+import { actionEnum, path as pathSchema, uuid as uuidSchema } from '../schemas/common';
 
 /**
  * ArrayPropertyToolsV2 — 数组属性操作工具 v2
@@ -6,7 +9,10 @@ import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
  * category key: array
  * 1 个工具: property
  */
-export class ArrayPropertyToolsV2 implements ToolExecutor {
+export class ArrayPropertyToolsV2 extends BaseToolExecutor {
+    protected readonly handlers = {
+        property: async (args: any) => this.handleProperty(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -16,13 +22,9 @@ export class ArrayPropertyToolsV2 implements ToolExecutor {
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        uuid: { type: 'string', description: 'Node UUID' },
-                        path: { type: 'string', description: 'Array property path, e.g. __comps__' },
-                        action: {
-                            type: 'string',
-                            enum: ['move', 'remove'],
-                            description: 'Operation type'
-                        },
+                        uuid: { ...uuidSchema, description: 'Node UUID' },
+                        path: { ...pathSchema, description: 'Array property path, e.g. __comps__' },
+                        action: actionEnum(['move', 'remove'], 'Operation type'),
                         index: { type: 'number', description: 'Target index for action=remove' },
                         target: { type: 'number', description: 'Target index for action=move' },
                         offset: { type: 'number', description: 'Move offset for action=move' }
@@ -33,15 +35,6 @@ export class ArrayPropertyToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'property':
-                return await this.handleProperty(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
-    }
-
     private async handleProperty(args: any): Promise<ToolResponse> {
         switch (args.action) {
             case 'move':
@@ -49,7 +42,7 @@ export class ArrayPropertyToolsV2 implements ToolExecutor {
             case 'remove':
                 return await this.removeArrayElement(args.uuid, args.path, args.index);
             default:
-                return { success: false, error: `Unknown array property action: ${args.action}` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown array property action: ${args.action}`);
         }
     }
 

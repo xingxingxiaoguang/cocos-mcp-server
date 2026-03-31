@@ -1,4 +1,5 @@
 import { basename, join } from 'path';
+import { safeSerialize } from './utils/serializer';
 module.paths.push(join(Editor.App.path, 'node_modules'));
 
 /**
@@ -11,110 +12,6 @@ function findNodeByUuid(root: any, uuid: string): any {
         if (found) return found;
     }
     return null;
-}
-
-/**
- * 安全序列化：将引擎对象转换为可跨进程传递的普通数据结构
- */
-function hasMeaningfulContent(value: any, depth: number = 0): boolean {
-    if (depth > 7) return true;
-    if (value === null || value === undefined) return false;
-
-    const type = typeof value;
-    if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') return true;
-    if (type === 'function') return false;
-
-    if (Array.isArray(value)) {
-        if (value.length === 0) return false;
-        return value.some((item: any) => hasMeaningfulContent(item, depth + 1));
-    }
-
-    if (type === 'object') {
-        const keys = Object.keys(value);
-        if (keys.length === 0) return false;
-        return keys.some((key: string) => hasMeaningfulContent(value[key], depth + 1));
-    }
-
-    return true;
-}
-
-function safeSerialize(value: any, depth: number = 0, seen: WeakSet<object> = new WeakSet(), maxDepth: number = 6): any {
-    if (depth > maxDepth) return '[max depth]';
-    if (value === null || value === undefined) return value;
-
-    const type = typeof value;
-    if (type === 'number' || type === 'string' || type === 'boolean') return value;
-    if (type === 'bigint') return value.toString();
-    if (type === 'function') return `[Function ${value.name || 'anonymous'}]`;
-
-    if (Array.isArray(value)) {
-        return value.slice(0, 100).map((item: any) => safeSerialize(item, depth + 1, seen, maxDepth));
-    }
-
-    if (type === 'object') {
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value.valueOf();
-        }
-
-        if (seen.has(value)) {
-            return '[circular]';
-        }
-        seen.add(value);
-
-        try {
-            try {
-                const json = JSON.stringify(value);
-                if (json) {
-                    const parsed = JSON.parse(json);
-                    if (hasMeaningfulContent(parsed)) {
-                        return parsed;
-                    }
-                }
-            } catch {
-                // Circular reference or non-serializable object, continue with manual extraction
-            }
-
-            const result: Record<string, any> = {};
-            const keys = Object.keys(value);
-            const inspectKeys = keys.length > 0
-                ? keys
-                : ['name', 'uuid', 'active', 'position', 'rotation', 'scale', 'x', 'y', 'z', 'w', 'width', 'height', 'r', 'g', 'b', 'a', 'children', 'components', 'parent'];
-
-            for (const key of inspectKeys.slice(0, 20)) {
-                try {
-                    const item = value[key];
-                    if (item !== undefined && typeof item !== 'function') {
-                        result[key] = safeSerialize(item, depth + 1, seen, maxDepth);
-                    }
-                } catch {
-                    // Skip inaccessible property
-                }
-            }
-
-            if (Object.keys(result).length > 0) {
-                return result;
-            }
-
-            try {
-                const primitive = typeof value.valueOf === 'function' ? value.valueOf() : value;
-                if (primitive !== value && (typeof primitive === 'string' || typeof primitive === 'number' || typeof primitive === 'boolean')) {
-                    return primitive;
-                }
-            } catch {
-                // Ignore valueOf failures
-            }
-
-            try {
-                return String(value);
-            } catch {
-                return '[object]';
-            }
-        } finally {
-            seen.delete(value);
-        }
-    }
-
-    return String(value);
 }
 
 function serializeData<T>(value: T): any {

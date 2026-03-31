@@ -1,54 +1,5 @@
 import { ToolDefinition, ToolResponse, ToolExecutor, ComponentInfo } from '../../types';
-
-function serializeToolResult(value: any, depth: number = 0, seen: WeakSet<object> = new WeakSet()): any {
-    if (depth > 3) return '[max depth]';
-    if (value === null || value === undefined) return value;
-
-    const type = typeof value;
-    if (type === 'number' || type === 'string' || type === 'boolean' || type === 'bigint') {
-        return type === 'bigint' ? value.toString() : value;
-    }
-    if (type === 'function') {
-        return `[Function ${value.name || 'anonymous'}]`;
-    }
-
-    if (Array.isArray(value)) {
-        return value.slice(0, 100).map((item: any) => serializeToolResult(item, depth + 1, seen));
-    }
-
-    if (type === 'object') {
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value.valueOf();
-        }
-
-        if (seen.has(value)) {
-            return '[circular]';
-        }
-        seen.add(value);
-
-        try {
-            const keys = Object.keys(value);
-            const result: Record<string, any> = {};
-            for (const key of keys.slice(0, 20)) {
-                try {
-                    const item = value[key];
-                    if (item !== undefined && typeof item !== 'function') {
-                        result[key] = serializeToolResult(item, depth + 1, seen);
-                    }
-                } catch {
-                    // Skip inaccessible property
-                }
-            }
-            if (Object.keys(result).length > 0) {
-                return result;
-            }
-        } finally {
-            seen.delete(value);
-        }
-    }
-
-    return String(value);
-}
+import { safeSerialize } from '../../utils/serializer';
 
 interface ComponentSetContext {
     nodeUuid: string;
@@ -816,7 +767,7 @@ export class ComponentToolsV2 implements ToolExecutor {
             }).then((result: any) => {
                 resolve({
                     success: true,
-                    data: { result: serializeToolResult(result), message: `Method '${name}' executed successfully` }
+                    data: { result: safeSerialize(result), message: `Method '${name}' executed successfully` }
                 });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
@@ -1782,21 +1733,21 @@ export class ComponentToolsV2 implements ToolExecutor {
             const simplified: any = {};
 
             if (descriptor.value !== undefined) {
-                simplified.value = serializeToolResult(descriptor.value);
+                simplified.value = safeSerialize(descriptor.value);
             }
 
             const resolvedType = descriptor.type !== undefined ? descriptor.type : descriptor.ctor;
             if (resolvedType !== undefined) {
-                simplified.type = serializeToolResult(resolvedType);
+                simplified.type = safeSerialize(resolvedType);
             }
             if (descriptor.ctor !== undefined) {
-                simplified.ctor = serializeToolResult(descriptor.ctor);
+                simplified.ctor = safeSerialize(descriptor.ctor);
             }
             if (descriptor.readonly) {
                 simplified.readonly = true;
             }
             if (descriptor.enumList !== undefined) {
-                simplified.enumList = serializeToolResult(descriptor.enumList);
+                simplified.enumList = safeSerialize(descriptor.enumList);
             }
             if (descriptor.min !== undefined) {
                 simplified.min = descriptor.min;
@@ -1808,7 +1759,7 @@ export class ComponentToolsV2 implements ToolExecutor {
                 simplified.step = descriptor.step;
             }
             if (descriptor.extends !== undefined) {
-                simplified.extends = serializeToolResult(descriptor.extends);
+                simplified.extends = safeSerialize(descriptor.extends);
             }
 
             if (Object.keys(simplified).length > 0) {

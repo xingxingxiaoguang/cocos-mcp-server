@@ -1,11 +1,17 @@
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
+import { ToolDefinition, ToolResponse } from '../../types/mcp';
+import { makeError, ToolErrorCode } from '../../utils/error-codes';
+import { BaseToolExecutor } from '../base-tool';
+import { actionEnum, uuid as uuidSchema } from '../schemas/common';
 
 /**
  * UndoToolsV2 — Undo 操作工具 v2
  * 合并自 SceneAdvancedTools (undo 部分)
  * 1 个工具: recording
  */
-export class UndoToolsV2 implements ToolExecutor {
+export class UndoToolsV2 extends BaseToolExecutor {
+    protected readonly handlers = {
+        recording: async (args: any) => this.handleRecording(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -15,27 +21,17 @@ export class UndoToolsV2 implements ToolExecutor {
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        action: {
-                            type: 'string',
-                            enum: ['begin', 'end', 'cancel'],
-                            description: 'begin=start recording, end=end recording and commit, cancel=cancel recording'
-                        },
-                        uuid: { type: 'string', description: 'Node UUID for action=begin' },
-                        undoId: { type: 'string', description: 'Recording ID for action=end/cancel' }
+                        action: actionEnum(
+                            ['begin', 'end', 'cancel'],
+                            'begin=start recording, end=end recording and commit, cancel=cancel recording',
+                        ),
+                        uuid: { ...uuidSchema, description: 'Node UUID for action=begin' },
+                        undoId: { ...uuidSchema, description: 'Recording ID for action=end/cancel' }
                     },
                     required: ['action']
                 }
             }
         ];
-    }
-
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'recording':
-                return await this.handleRecording(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
     }
 
     private async handleRecording(args: any): Promise<ToolResponse> {
@@ -47,7 +43,7 @@ export class UndoToolsV2 implements ToolExecutor {
             case 'cancel':
                 return await this.cancelUndoRecording(args.undoId);
             default:
-                return { success: false, error: `Unknown recording action: ${args.action}` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown recording action: ${args.action}`);
         }
     }
 

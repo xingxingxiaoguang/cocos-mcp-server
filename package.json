@@ -9,7 +9,8 @@
         "preinstall": "node ./scripts/preinstall.js",
         "build": "tsc",
         "watch": "tsc -w",
-        "smoke:ipc": "node ./dist/test/ipc-contract-smoke.js"
+        "smoke:ipc": "node ./dist/test/ipc-contract-smoke.js",
+        "smoke:foundation": "node ./dist/test/foundation-modules-smoke.js"
     },
     "description": "i18n:cocos-mcp-server.description",
     "main": "./dist/main.js",

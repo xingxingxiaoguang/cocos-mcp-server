@@ -1,0 +1,93 @@
+export interface ComponentInfo {
+    type: string;
+    enabled: boolean;
+    properties?: Record<string, any>;
+}
+
+export interface NodeInfo {
+    uuid: string;
+    name: string;
+    active: boolean;
+    position?: { x: number; y: number; z: number };
+    rotation?: { x: number; y: number; z: number };
+    scale?: { x: number; y: number; z: number };
+    parent?: string;
+    children?: string[];
+    components?: ComponentInfo[];
+    layer?: number;
+    mobility?: number;
+}
+
+export interface SceneInfo {
+    name: string;
+    uuid: string;
+    path: string;
+}
+
+export interface PrefabInfo {
+    name: string;
+    uuid: string;
+    path: string;
+    folder: string;
+    createTime?: string;
+    modifyTime?: string;
+    dependencies?: string[];
+}
+
+export interface AnimationClipInfo {
+    uuid: string;
+    name: string;
+    path: string;
+    duration?: number;
+    sample?: number;
+}
+
+export interface AssetInfo {
+    name: string;
+    uuid: string;
+    path: string;
+    type: string;
+    size?: number;
+    isDirectory: boolean;
+    meta?: {
+        ver: string;
+        importer: string;
+    };
+}
+
+export interface ProjectInfo {
+    name: string;
+    path: string;
+    uuid: string;
+    version: string;
+    cocosVersion: string;
+}
+
+export interface ConsoleMessage {
+    timestamp: string;
+    type: 'log' | 'warn' | 'error' | 'info';
+    message: string;
+    stack?: string;
+}
+
+export interface PerformanceStats {
+    nodeCount: number;
+    componentCount: number;
+    drawCalls: number;
+    triangles: number;
+    memory: Record<string, any>;
+}
+
+export interface ValidationIssue {
+    type: 'error' | 'warning' | 'info';
+    category: string;
+    message: string;
+    details?: any;
+    suggestion?: string;
+}
+
+export interface ValidationResult {
+    valid: boolean;
+    issueCount: number;
+    issues: ValidationIssue[];
+}
