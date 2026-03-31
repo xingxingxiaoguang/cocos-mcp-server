@@ -174,7 +174,7 @@ main
 
 ---
 
-## 9. 目标工具集总览（34 个）
+## 9. 目标工具集总览（32 个）
 
 | 类别 | 工具数 | 工具名 |
 |------|--------|--------|
@@ -189,6 +189,4 @@ main
 | Undo | 1 | `undo_recording` |
 | 场景脚本 | 1 | `scene_script` |
 | 数组属性 | 1 | `array_property` |
-| 脚本文件（新增） | 1 | `script_file` |
 | 动画（新增） | 1 | `animation_clip` |
-| 材质（新增） | 1 | `material_property` |

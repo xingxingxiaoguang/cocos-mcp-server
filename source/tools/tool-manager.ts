@@ -92,6 +92,7 @@ export class ToolManager {
             const { UndoToolsV2 } = require('./v2/undo-tools');
             const { SceneScriptToolsV2 } = require('./v2/scene-script-tools');
             const { ArrayPropertyToolsV2 } = require('./v2/array-property-tools');
+            const { AnimationToolsV2 } = require('./v2/animation-tools');
 
             const tools = {
                 scene: new SceneToolsV2(),
@@ -104,7 +105,8 @@ export class ToolManager {
                 preferences: new PreferencesToolsV2(),
                 undo: new UndoToolsV2(),
                 sceneScript: new SceneScriptToolsV2(),
-                array: new ArrayPropertyToolsV2()
+                array: new ArrayPropertyToolsV2(),
+                animation: new AnimationToolsV2()
             };
 
             this.availableTools = [];
@@ -182,6 +184,9 @@ export class ToolManager {
             ]},
             { category: 'array', tools: [
                 { name: 'property', description: '数组属性操作' }
+            ]},
+            { category: 'animation', tools: [
+                { name: 'clip', description: '动画剪辑查询与编辑' }
             ]},
         ];
 

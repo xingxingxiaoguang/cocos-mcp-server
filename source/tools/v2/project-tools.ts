@@ -274,7 +274,7 @@ export class ProjectToolsV2 implements ToolExecutor {
 
     private async buildProject(args: any): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('builder', 'open').then(() => {
+            Editor.Message.request('builder', 'open', 'default').then(() => {
                 resolve({
                     success: true,
                     message: `Build panel opened for ${args.platform}. Please configure and start build manually.`,
@@ -291,7 +291,7 @@ export class ProjectToolsV2 implements ToolExecutor {
 
     private async runProject(platform: string = 'browser'): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('builder', 'open').then(() => {
+            Editor.Message.request('builder', 'open', 'default').then(() => {
                 resolve({
                     success: true,
                     message: 'Build panel opened. Preview functionality requires manual setup.'
@@ -321,7 +321,7 @@ export class ProjectToolsV2 implements ToolExecutor {
 
     private async openBuildPanel(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            Editor.Message.request('builder', 'open').then(() => {
+            Editor.Message.request('builder', 'open', 'default').then(() => {
                 resolve({ success: true, message: 'Build panel opened successfully' });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
