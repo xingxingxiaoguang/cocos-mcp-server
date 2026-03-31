@@ -1,8 +1,8 @@
 # 项目架构优化技术方案
 
-> 版本: 1.0  
+> 版本: 1.1  
 > 日期: 2026-03-31  
-> 目标: 解决随工具数量膨胀带来的可维护性下降问题，建立清晰的分层架构，统一 API 管理、类型体系、错误处理和工具开发规范。
+> 目标: 解决随工具数量膨胀带来的可维护性下降问题，建立清晰的分层架构，统一 API 管理、类型体系、错误处理和工具开发规范，并优先收敛 IPC 契约、工具注册源与历史遗留依赖。
 
 ---
 
@@ -96,6 +96,32 @@ return new Promise((resolve) => {
 
 `source/tools/prefab-tools.ts`（v1，117 行）和 `source/tools/v2/prefab-tools.ts` 同时存在，v1 的注册状态不明确，增加认知负担。
 
+#### 问题 9：主进程 / 面板 IPC 契约已经漂移
+
+- `main.ts` 中 `updateToolStatus()`、`updateToolStatusBatch()` 的方法签名与 `panels/tool-manager` 实际调用不一致
+- `getToolManagerState()` 的返回结构与调用方预期不一致，当前存在 `currentConfiguration` / `selectedConfigId` 的结构漂移
+- `package.json` 中注册了 `open-tool-manager`，但主进程未实现 `openToolManager`
+- 此类问题不会被 `tsc` 拦截，说明当前类型体系未覆盖主进程与面板边界
+
+#### 问题 10：工具注册存在多份事实来源
+
+- `mcp-server.ts` 维护一份工具实例化清单
+- `tool-manager.ts` 再次 `require()` 一份 v2 工具集合来生成可选工具列表
+- `tool-manager.ts` 还有一份硬编码 fallback 工具清单
+- `PrefabToolsV2` 仍依赖 v1 `PrefabTools`，导致 prefab 能力在 v1/v2 间交叉实现
+
+#### 问题 11：主进程职责边界不清
+
+- `updateSettings()` 同时承担“保存配置”和“控制服务生命周期”两类职责
+- `main.ts` 中既处理面板消息，又直接编排 `ToolManager` 与 `MCPServer`
+- `settings.ts` 与 `tool-manager.ts` 各自包含一套读写配置逻辑，缺乏统一 repository/service 抽象
+
+#### 问题 12：面板层缺乏治理与清理
+
+- 默认面板存在轮询逻辑，但缺乏完整的资源释放与状态同步约束
+- `panels/default` 与 `panels/tool-manager` 采用两套不同的状态管理方式
+- 当前 `tool-manager` 面板更接近遗留实现，是否保留、并入或删除尚未在代码结构上体现
+
 ---
 
 ## 二、目标架构
@@ -104,29 +130,33 @@ return new Promise((resolve) => {
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    MCP 协议层                            │
-│  mcp-server.ts  ─  HTTP 服务 + JSON-RPC 协议 + 日志中间件 │
+│                    Panel / UI 层                         │
+│  panels/default  ─  ipc/client.ts  ─  单一受支持入口      │
 └───────────────────────────┬─────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────┐
-│                    工具执行层                            │
-│  tools/v2/  ─  BaseToolExecutor + 各业务工具类           │
-│  tools/schemas/  ─  公共 inputSchema 片段               │
+│                    IPC 契约层                            │
+│  ipc/contracts.ts  ─  主进程消息名、参数、返回结构        │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────┐
+│                  主进程服务 / 应用层                     │
+│  main.ts  ─  薄 IPC facade                               │
+│  services/  ─  server-controller / tool-config-service   │
+│             ─  settings-repository / tool-registry       │
 └──────────────┬─────────────────────────┬────────────────┘
                │                         │
 ┌──────────────▼──────────┐  ┌───────────▼────────────────┐
-│      Editor Bridge 层    │  │        工具 Utils 层        │
-│  editor-bridge/          │  │  utils/                    │
-│  - scene-messages.ts     │  │  - serializer.ts           │
-│  - asset-messages.ts     │  │  - error-codes.ts          │
-│  - preferences-messages  │  │  - schema-helpers.ts       │
-│  - types.ts              │  └────────────────────────────┘
-└──────────────┬───────────┘
-               │
+│      MCP / Tool 执行层   │  │        Editor Bridge 层     │
+│  mcp-server.ts           │  │  scene / asset-db / prefs  │
+│  tools/v2/               │  │  builder message wrappers  │
+│  base-tool / schemas     │  └───────────┬────────────────┘
+└──────────────┬───────────┘              │
+               │                          │
 ┌──────────────▼──────────────────────────────────────────┐
 │                    场景进程层（scene/）                   │
-│  index.ts  serializer.ts  node-registry.ts              │
-│  animation-context.ts  editor-fallback.ts               │
+│  methods  node-registry  animation-context               │
+│  serialization  editor-fallback                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -134,9 +164,18 @@ return new Promise((resolve) => {
 
 ```
 source/
-├── main.ts                          # 不变，IPC 方法汇总
-├── mcp-server.ts                    # 精简，增加日志中间件
-├── settings.ts                      # 不变
+├── main.ts                          # 薄 IPC facade，不再承担业务编排
+├── mcp-server.ts                    # MCP transport / 协议解析 / 统一日志
+│
+├── ipc/                             # ★ 新增：主进程与面板契约
+│   ├── contracts.ts                 # 消息名、参数、返回结构
+│   └── client.ts                    # 面板侧统一请求封装
+│
+├── services/                        # ★ 新增：主进程服务层
+│   ├── tool-registry.ts             # 单一工具注册源
+│   ├── server-controller.ts         # 服务生命周期管理
+│   ├── tool-config-service.ts       # 工具配置业务
+│   └── settings-repository.ts       # 设置读写
 │
 ├── types/                           # 类型分层
 │   ├── index.ts                     # 统一 re-export
@@ -159,15 +198,17 @@ source/
 │   └── schema-helpers.ts            # 公共 inputSchema 片段（uuid、path 等）
 │
 ├── scene/                           # ★ 重构：scene.ts 拆分
-│   ├── index.ts                     # 对外统一 export
-│   ├── serializer.ts                # safeSerialize（迁移自 scene.ts）
+│   ├── methods.ts                   # 场景进程 methods 主体
+│   ├── serialization.ts             # safeSerialize（迁移自 scene.ts）
 │   ├── node-registry.ts             # findNodeByUuid、节点遍历
 │   ├── animation-context.ts         # 动画编辑上下文管理
 │   └── editor-fallback.ts           # tryEditorThenEngine 通用逻辑
 │
+├── scene.ts                         # 兼容 facade，继续作为 Cocos 场景入口
+│
 └── tools/
     ├── base-tool.ts                 # ★ 新增：BaseToolExecutor 基类
-    ├── tool-manager.ts              # 不变
+    ├── tool-manager.ts              # 收敛为配置业务薄封装或并入 service
     ├── schemas/                     # ★ 新增：公共 schema 片段
     │   └── common.ts                # uuid/uuids/path/action 等通用字段
     └── v2/                          # 各业务工具（内部实现简化）
@@ -189,7 +230,92 @@ source/
 
 ## 三、各优化项详细方案
 
-### 3.1 Editor Bridge 层（统一 API 管理）
+### 3.1 IPC 契约治理
+
+**目标：** 先修复当前已经漂移的主进程 / 面板边界，避免后续重构建立在错误契约上。
+
+**实现方案：**
+
+- 新增 `source/ipc/contracts.ts`，集中定义主进程暴露给面板的消息名、参数与返回结构
+- 为默认面板建立 `source/ipc/client.ts`，统一封装 `Editor.Message.request('cocos-mcp-server', ...)`
+- 所有面板调用改为消费同一套 contract，不允许散落的字符串调用
+- 修复当前已知漂移项：
+  - `updateToolStatus(category, toolName, enabled)` 与调用方保持一致
+  - `updateToolStatusBatch(updates)` 与调用方保持一致
+  - `getToolManagerState()` 返回 `currentConfiguration`、`selectedConfigId`、`configurations` 的统一结构
+  - `open-tool-manager` 要么补齐实现，要么从 `package.json` 删除
+
+**收益：**
+
+- 把“运行时才发现的参数错位”前移到编译期
+- 为面板重构与主进程拆分提供稳定边界
+- 先止血，再谈分层
+
+---
+
+### 3.2 单一工具注册源（Tool Registry）
+
+**目标：** 消除 `mcp-server.ts`、`tool-manager.ts`、fallback 列表三份工具事实来源。
+
+**实现方案：**
+
+```typescript
+// source/services/tool-registry.ts
+export interface ToolRegistration {
+    category: string;
+    create(): ToolExecutor;
+}
+
+export const TOOL_REGISTRY: ToolRegistration[] = [
+    { category: 'scene', create: () => new SceneToolsV2() },
+    { category: 'node', create: () => new NodeToolsV2() },
+    // ...
+];
+```
+
+由此派生：
+
+- `MCPServer` 的工具实例化
+- `ToolManager` 的 `availableTools`
+- 可选的工具元数据导出 / 文档生成
+
+**约束：**
+
+- 禁止在 `tool-manager.ts` 内再次手动 `require()` 所有工具
+- 禁止保留第二份硬编码 fallback 工具清单
+- 新增工具只能改 registry，一处生效
+
+---
+
+### 3.3 主进程服务拆分
+
+**目标：** 将 `main.ts` 从“业务堆积点”收敛为薄 IPC facade。
+
+**拆分建议：**
+
+- `source/services/server-controller.ts`
+  - 负责 `start / stop / restart / getStatus`
+- `source/services/settings-repository.ts`
+  - 负责 `mcp-server.json` 的读写
+- `source/services/tool-config-service.ts`
+  - 负责工具配置的创建、切换、导入导出、同步
+- `source/services/tool-registry.ts`
+  - 负责工具定义与实例工厂
+
+`main.ts` 只保留：
+
+- IPC 消息注册
+- 参数转发
+- 最薄的错误边界
+
+`updateSettings()` 不再隐式执行 `stop -> new server -> start`，而是拆成：
+
+- `saveSettings(settings)`
+- `applyRuntimeSettings(settings)` 或 `restartServerIfNeeded()`
+
+---
+
+### 3.4 Editor Bridge 层（统一 API 管理）
 
 **目标：** 消除魔法字符串，提供编译期类型安全，集中管理 API 版本兼容处理。
 
@@ -201,14 +327,11 @@ export const SCENE_MSG = {
     QUERY_NODE: 'query-node',
     SET_PROPERTY: 'set-property',
     CREATE_NODE: 'create-node',
-    DELETE_NODE: 'delete-node',
-    // ...
 } as const;
+```
 
+```typescript
 // source/editor-bridge/scene-messages.ts
-import { SCENE_MSG } from './message-constants';
-import type { NodeInfo, NodeCreateSpec } from '../types/domain';
-
 export const SceneMessages = {
     async queryNode(uuid: string): Promise<NodeInfo> {
         return Editor.Message.request('scene', SCENE_MSG.QUERY_NODE, uuid);
@@ -216,74 +339,49 @@ export const SceneMessages = {
     async createNode(spec: NodeCreateSpec): Promise<string> {
         return Editor.Message.request('scene', SCENE_MSG.CREATE_NODE, spec);
     },
-    // 版本兼容处理集中在此
-    async queryComponentWithFallback(uuid: string, type: string): Promise<any> {
-        try {
-            return await Editor.Message.request('scene', SCENE_MSG.QUERY_COMPONENT, uuid, type);
-        } catch {
-            // fallback to execute-scene-script
-            return SceneMessages.executeSceneScript({...});
-        }
-    }
 };
 ```
 
-工具文件调用方式变为：
-```typescript
-import { SceneMessages } from '../../editor-bridge';
+**补充要求：**
 
-const nodeInfo = await SceneMessages.queryNode(args.uuid);
-```
-
-**收益：**
-- 消除全部魔法字符串，IDE 可跳转、可重构
-- Cocos 版本升级时只改 bridge 层，工具层零感知
-- fallback 逻辑集中管理，不再各工具自行实现
+- fallback 逻辑统一放在 bridge 中，而不是散落到工具文件
+- bridge 层同时承担“消息名常量”与“返回值适配”职责
+- 只要求核心桥接接口显式类型化，不追求一次性消灭所有 `any`
 
 ---
 
-### 3.2 类型分层重构
+### 3.5 类型分层重构
 
-**目标：** 区分 MCP 协议类型、业务 Model、配置类型、Editor 返回值类型。
+**目标：** 区分 MCP 协议类型、业务 Model、配置类型、Editor 返回值类型与 IPC 契约类型。
 
 **拆分方案：**
 
-```typescript
-// source/types/mcp.ts  —— MCP 协议层类型
-export interface ToolDefinition { ... }
-export interface ToolResponse { ... }
-export interface ToolExecutor { ... }
-export interface ServerStatus { ... }
+- `source/types/mcp.ts`
+  - `ToolDefinition`
+  - `ToolResponse`
+  - `ToolExecutor`
+  - `ServerStatus`
+- `source/types/domain.ts`
+  - `NodeInfo`
+  - `NodeCreateSpec`
+  - `ComponentInfo`
+  - `PrefabInfo`
+  - `AnimationClipInfo`
+- `source/types/config.ts`
+  - `MCPServerSettings`
+  - `ToolConfig`
+  - `ToolConfiguration`
+  - `ToolManagerSettings`
+- `source/types/editor.ts`
+  - Editor / asset-db / scene 返回值声明
+- `source/ipc/contracts.ts`
+  - 面板与主进程的消息契约
 
-// source/types/domain.ts  —— 业务领域 Model
-export interface NodeInfo { ... }
-export interface NodeCreateSpec { ... }     // 从 node-tools.ts 提升
-export interface ComponentInfo { ... }
-export interface AssetInfo { ... }
-export interface SceneInfo { ... }
-export interface PrefabInfo { ... }
-export interface ProjectInfo { ... }
-export interface AnimationClipInfo { ... }  // 从 animation-tools.ts 提升
-
-// source/types/config.ts  —— 配置类型
-export interface MCPServerSettings { ... }
-export interface ToolConfig { ... }
-export interface ToolConfiguration { ... }
-export interface ToolManagerSettings { ... }
-
-// source/types/editor.ts  —— Cocos Editor API 返回值类型
-// 为 Editor.Message.request 的返回值提供类型声明，减少 any 使用
-
-// source/types/index.ts  —— 统一 re-export，保持向后兼容
-export * from './mcp';
-export * from './domain';
-export * from './config';
-export * from './editor';
-```
+`source/types/index.ts` 继续做 re-export，保持兼容。
 
 ---
 
-### 3.3 统一序列化工具
+### 3.6 统一序列化工具
 
 **目标：** 合并三处序列化实现，统一行为参数。
 
@@ -292,284 +390,177 @@ export * from './editor';
 ```typescript
 // source/utils/serializer.ts
 export interface SerializeOptions {
-    maxDepth?: number;       // 默认 4
-    maxArrayLength?: number; // 默认 100
-    maxObjectKeys?: number;  // 默认 50
+    maxDepth?: number;
+    maxArrayLength?: number;
+    maxObjectKeys?: number;
 }
 
-export function safeSerialize(value: any, options?: SerializeOptions): any {
+export function safeSerialize(value: unknown, options?: SerializeOptions): unknown {
     const opts = { maxDepth: 4, maxArrayLength: 100, maxObjectKeys: 50, ...options };
-    return _serialize(value, 0, new WeakSet(), opts);
-}
-
-function _serialize(value: any, depth: number, seen: WeakSet<object>, opts: Required<SerializeOptions>): any {
-    // 统一实现，合并三处逻辑
+    return serialize(value, 0, new WeakSet(), opts);
 }
 ```
 
-各使用方按需传入自定义参数：
-```typescript
-// scene-script-tools.ts 需要浅序列化
-safeSerialize(result, { maxDepth: 3, maxObjectKeys: 20 })
-
-// scene.ts 需要深序列化
-safeSerialize(nodeData, { maxDepth: 6 })
-```
+不同调用方只调参数，不再复制实现。
 
 ---
 
-### 3.4 结构化错误码体系
+### 3.7 结构化错误码体系
 
-**目标：** 让 AI 客户端能够根据错误类型采取不同的处理策略。
+**目标：** 让 AI 客户端与面板能区分“参数问题 / 状态问题 / 环境问题 / Editor API 失败”。
 
 **实现方案：**
 
-```typescript
-// source/utils/error-codes.ts
-export enum ToolErrorCode {
-    // 参数类错误 —— AI 可调整参数后重试
-    INVALID_ARGS       = 'INVALID_ARGS',
-    MISSING_REQUIRED   = 'MISSING_REQUIRED',
-
-    // 状态类错误 —— AI 需先执行前置步骤
-    SCENE_NOT_OPEN     = 'SCENE_NOT_OPEN',
-    ANIMATION_NOT_RECORDING = 'ANIMATION_NOT_RECORDING',
-
-    // 资源类错误 —— 目标对象不存在
-    NODE_NOT_FOUND     = 'NODE_NOT_FOUND',
-    ASSET_NOT_FOUND    = 'ASSET_NOT_FOUND',
-    COMPONENT_NOT_FOUND = 'COMPONENT_NOT_FOUND',
-
-    // API 类错误 —— 可重试
-    EDITOR_API_FAILED  = 'EDITOR_API_FAILED',
-    TIMEOUT            = 'TIMEOUT',
-
-    // 环境类错误 —— 需要用户介入
-    PERMISSION_DENIED  = 'PERMISSION_DENIED',
-    UNSUPPORTED_VERSION = 'UNSUPPORTED_VERSION',
-}
-
-// ToolResponse 增加 errorCode 字段
-// source/types/mcp.ts
-export interface ToolResponse {
-    success: boolean;
-    data?: any;
-    message?: string;
-    error?: string;
-    errorCode?: ToolErrorCode;  // ★ 新增
-    instruction?: string;
-    warning?: string;
-}
-
-// 错误工厂函数
-export function makeError(code: ToolErrorCode, message: string): ToolResponse {
-    return { success: false, error: message, errorCode: code };
-}
-```
+- `source/utils/error-codes.ts`
+  - `INVALID_ARGS`
+  - `MISSING_REQUIRED`
+  - `NODE_NOT_FOUND`
+  - `ASSET_NOT_FOUND`
+  - `SCENE_NOT_OPEN`
+  - `EDITOR_API_FAILED`
+  - `UNSUPPORTED_VERSION`
+- `ToolResponse` 增加 `errorCode`
+- 补充 `makeError()` / `normalizeUnknownError()` 等工厂函数
 
 ---
 
-### 3.5 BaseToolExecutor 基类
+### 3.8 BaseToolExecutor 基类
 
-**目标：** 消除 12 份几乎相同的 execute() 分发逻辑。
+**目标：** 消除重复的 execute 分发、统一日志与异常包装。
 
-**实现方案：**
+**建议：** 使用显式 handler map，而不是字符串反射。
 
 ```typescript
-// source/tools/base-tool.ts
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../types';
-
 export abstract class BaseToolExecutor implements ToolExecutor {
+    protected abstract readonly handlers: Record<string, (args: any) => Promise<ToolResponse>>;
     abstract getTools(): ToolDefinition[];
 
     async execute(toolName: string, args: any): Promise<ToolResponse> {
-        const methodName = `handle${toPascalCase(toolName)}`;
-        const handler = (this as any)[methodName];
-        if (typeof handler !== 'function') {
-            return { success: false, error: `Unknown tool: ${toolName}`, errorCode: 'INVALID_ARGS' };
+        const handler = this.handlers[toolName];
+        if (!handler) {
+            return makeError(ToolErrorCode.INVALID_ARGS, `Unknown tool: ${toolName}`);
         }
-        return handler.call(this, args);
+        return handler(args);
     }
 }
-
-function toPascalCase(s: string): string {
-    return s.replace(/(^|_|-|\.)[a-z]/g, c => c.slice(-1).toUpperCase());
-}
 ```
 
-工具类简化为：
-```typescript
-// 继承基类，去掉 execute() 方法，直接实现 handle* 方法
-export class NodeToolsV2 extends BaseToolExecutor {
-    getTools(): ToolDefinition[] { ... }
-
-    async handleQuery(args: any): Promise<ToolResponse> { ... }
-    async handleCreate(args: any): Promise<ToolResponse> { ... }
-    async handleModify(args: any): Promise<ToolResponse> { ... }
-}
-```
+这样能减少 `(this as any)[methodName]` 带来的隐式反射和调试难度。
 
 ---
 
-### 3.6 公共 inputSchema 片段复用
+### 3.9 公共 inputSchema 片段复用
 
 **目标：** 消除各工具中重复定义的公共参数 schema。
 
 **实现方案：**
 
-```typescript
-// source/tools/schemas/common.ts
-export const CommonSchemas = {
-    uuid: {
-        type: 'string' as const,
-        description: 'Target node UUID'
-    },
-    uuids: {
-        type: 'array' as const,
-        items: { type: 'string' as const },
-        description: 'Array of UUIDs for batch operations'
-    },
-    dbPath: {
-        type: 'string' as const,
-        description: 'Asset database path (db://assets/...)'
-    },
-    action: (values: string[], description: string) => ({
-        type: 'string' as const,
-        enum: values,
-        description
-    })
-};
-```
+- `source/tools/schemas/common.ts`
+  - `uuid`
+  - `uuids`
+  - `dbPath`
+  - `action(enumValues, description)`
+- 仅复用稳定字段，避免为了抽象而抽象
+- 工具专属复杂 schema 仍保留在各自工具文件中
 
-工具中使用：
-```typescript
-import { CommonSchemas } from '../schemas/common';
+---
 
-getTools(): ToolDefinition[] {
-    return [{
-        name: 'query',
-        description: '...',
-        inputSchema: {
-            type: 'object',
-            properties: {
-                uuid: CommonSchemas.uuid,
-                uuids: CommonSchemas.uuids,
-                // 工具专属字段
-                pattern: { type: 'string', description: '...' }
-            }
-        }
-    }];
-}
+### 3.10 scene.ts 按职责拆分
+
+**目标：** 将超大 `scene.ts` 拆为职责单一的模块，但降低接入风险。
+
+**关键调整：**
+
+- 保留一个很薄的 `source/scene.ts` 作为 Cocos 注册入口 facade
+- 将实现迁移到 `source/scene/` 目录
+- 不在第一步就强制把 `package.json` 入口改到 `scene/index.ts`
+
+**拆分建议：**
+
+- `source/scene/node-registry.ts`
+- `source/scene/animation-context.ts`
+- `source/scene/editor-fallback.ts`
+- `source/scene/serialization.ts`
+- `source/scene/methods.ts`
+
+`source/scene.ts` 只做：
+
+```typescript
+export { methods } from './scene/methods';
 ```
 
 ---
 
-### 3.7 scene.ts 按职责拆分
+### 3.11 Prefab 旧实现退役
 
-**目标：** 将 1469 行的 scene.ts 拆分为职责单一的模块，阻止继续膨胀。
+**目标：** 剪除 `source/tools/prefab-tools.ts` 的残余依赖，让 prefab 核心实现真正收敛到 v2。
 
-**拆分方案：**
+**现状：**
 
-```typescript
-// source/scene/serializer.ts
-// 迁移自 scene.ts:41-118，改为 import 自 utils/serializer.ts
-export { safeSerialize } from '../utils/serializer';
+- `PrefabToolsV2` 仍通过 `legacyPrefabTools` 委托旧实现
+- 当前至少还有 `create_prefab`、`duplicate_prefab` 两条路径依赖 v1
 
-// source/scene/node-registry.ts
-// 迁移自 scene.ts 的 findNodeByUuid 及节点遍历逻辑
-export function findNodeByUuid(root: any, uuid: string): any { ... }
-export function traverseNodes(root: any, callback: (node: any) => void): void { ... }
+**迁移方案：**
 
-// source/scene/animation-context.ts
-// 迁移自 scene.ts 的动画消息常量 + runAnimationOperations + 上下文管理
-export const SCENE_ANIM_MSG = { ... };
-export async function prepareAnimationEditContext(...): Promise<void> { ... }
-export async function runAnimationOperations(...): Promise<any> { ... }
+- 将 v1 中 `create_prefab` 的多策略创建逻辑迁移到 `source/tools/v2/prefab-tools.ts`
+- 将 `duplicate_prefab` 的实现迁移到 v2
+- 需要复用的细节逻辑抽到：
+  - `source/tools/services/prefab-service.ts` 或
+  - `source/tools/prefab/prefab-helpers.ts`
+- 删除 `legacyPrefabTools` 字段与 import
+- 最终删除 `source/tools/prefab-tools.ts`
 
-// source/scene/editor-fallback.ts
-// 迁移自 scene.ts 的 tryEditorThenEngine
-export async function tryEditorThenEngine<T>(...): Promise<T> { ... }
+**验收标准：**
 
-// source/scene/index.ts
-// 统一 export，Cocos Creator 仍注册 scene/index.ts 为场景脚本入口
-export * from './serializer';
-export * from './node-registry';
-export * from './animation-context';
-export * from './editor-fallback';
-// 场景方法注册（原 scene.ts 的 methods 对象）
-export const methods = { ... };
-```
+- `rg "legacyPrefabTools|source/tools/prefab-tools"` 结果为 0
+- `from_node / instantiate / duplicate / apply / revert` 手动验证通过
 
 ---
 
-### 3.8 请求日志中间件
+### 3.12 请求日志中间件与严格协议解析
 
-**目标：** 统一记录工具调用的入参、出参、耗时，受 enableDebugLog 开关控制。
+**目标：** 统一记录工具调用的入参、出参、耗时，并收紧协议解析行为。
 
-**实现方案（在 mcp-server.ts 的 executeToolCall 中）：**
+**实现方案：**
 
-```typescript
-private async executeToolCall(toolName: string, args: any): Promise<ToolResponse> {
-    const startTime = Date.now();
-    if (this.settings.enableDebugLog) {
-        console.log(`[MCP] → ${toolName}`, JSON.stringify(args));
-    }
-
-    let response: ToolResponse;
-    try {
-        response = await this.dispatchTool(toolName, args);
-    } catch (err) {
-        response = { success: false, error: String(err), errorCode: ToolErrorCode.EDITOR_API_FAILED };
-    }
-
-    if (this.settings.enableDebugLog) {
-        const elapsed = Date.now() - startTime;
-        const status = response.success ? 'OK' : `FAIL(${response.errorCode ?? 'UNKNOWN'})`;
-        console.log(`[MCP] ← ${toolName} ${status} ${elapsed}ms`);
-    }
-
-    return response;
-}
-```
+- 在 `mcp-server.ts` 的工具执行链路增加：
+  - `requestId`
+  - 工具名
+  - 耗时
+  - 成功/失败状态
+  - `errorCode`
+- `enableDebugLog` 开启时输出完整调试日志
+- 对大参数、脚本内容、资产内容做截断与脱敏
+- 逐步移除或收紧 `fixCommonJsonIssues()` 这类激进的 JSON 自动修复逻辑，优先返回明确 parse error
 
 ---
 
-### 3.9 Promise 包装反模式清理
+### 3.13 Promise 包装反模式清理
 
 **目标：** 全面使用 async/await，消除不必要的 Promise 包装。
 
-**重构前：**
-```typescript
-private async handleQuery(args: any): Promise<ToolResponse> {
-    return new Promise((resolve) => {
-        Editor.Message.request('scene', 'query-node', args.uuid)
-            .then((result: any) => {
-                resolve({ success: true, data: result });
-            })
-            .catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-    });
-}
-```
+**重构原则：**
 
-**重构后（配合 editor-bridge）：**
-```typescript
-private async handleQuery(args: any): Promise<ToolResponse> {
-    try {
-        const data = await SceneMessages.queryNode(args.uuid);
-        return { success: true, data };
-    } catch (err) {
-        return makeError(ToolErrorCode.NODE_NOT_FOUND, (err as Error).message);
-    }
-}
-```
+- 不再写 `return new Promise(resolve => ...)`
+- 统一使用 `await + try/catch`
+- `Editor.Message.request()` 的异常由 bridge / base executor / makeError 统一处理
 
 ---
 
-### 3.10 清理 v1 遗留文件
+### 3.14 Panel 层治理
 
-`source/tools/prefab-tools.ts`（v1 版本）已被 `source/tools/v2/prefab-tools.ts` 替代，需确认后删除。
+**目标：** 明确默认面板与旧 tool-manager 面板的去留，并统一状态模型。
+
+**方案建议：**
+
+- 默认面板继续保留，作为唯一受支持的 UI 入口
+- 旧 `panels/tool-manager` 二选一：
+  - 正式接入并用同一套 IPC contract 重构
+  - 明确删除，避免遗留代码继续误导维护者
+- 为默认面板补齐：
+  - 定时器清理
+  - 生命周期统一
+  - 面板状态与主进程状态的单向同步约束
 
 ---
 
@@ -578,83 +569,117 @@ private async handleQuery(args: any): Promise<ToolResponse> {
 ### 阶段划分原则
 
 - 每个阶段独立可发布，不影响现有功能
-- 优先处理高影响、低风险的基础设施建设
-- 工具文件的重构放在基础设施稳定后进行
+- 先止血，再分层，再迁移
+- 先收敛事实来源和契约，再建设基础设施
+- 每个阶段都必须具备验证手段，而不只是“编译通过”
 
-### 阶段一：基础设施建设（优先级 P0）
+### 阶段 0：契约与死代码治理（优先级 P0）
 
-**目标：** 建立新的基础模块，不修改现有工具文件。
-
-| 任务 | 说明 | 预估影响文件数 |
-|------|------|--------------|
-| 创建 `source/utils/serializer.ts` | 合并三处序列化实现 | 新增 1 |
-| 创建 `source/utils/error-codes.ts` | 定义 ToolErrorCode | 新增 1 |
-| 创建 `source/tools/schemas/common.ts` | 公共 schema 片段 | 新增 1 |
-| 创建 `source/tools/base-tool.ts` | BaseToolExecutor 基类 | 新增 1 |
-| 拆分 `source/types/` | 类型分层（向后兼容） | 修改 1，新增 4 |
-
-**验收标准：** 编译通过，现有工具行为不变。
-
-### 阶段二：Editor Bridge 层（优先级 P0）
-
-**目标：** 建立统一的 Cocos Editor API 封装层。
-
-| 任务 | 说明 | 预估影响文件数 |
-|------|------|--------------|
-| 创建 `source/editor-bridge/message-constants.ts` | 提取所有消息名常量 | 新增 1 |
-| 创建 `source/editor-bridge/scene-messages.ts` | 封装 scene channel | 新增 1 |
-| 创建 `source/editor-bridge/asset-messages.ts` | 封装 asset-db channel | 新增 1 |
-| 创建 `source/editor-bridge/preferences-messages.ts` | 封装 preferences channel | 新增 1 |
-| 创建 `source/editor-bridge/builder-messages.ts` | 封装 builder channel | 新增 1 |
-
-**验收标准：** bridge 层编译通过，类型完整（无 any 残留）。
-
-### 阶段三：scene.ts 拆分（优先级 P1）
-
-**目标：** 将 scene.ts 重构为 scene/ 目录的多模块结构。
+**目标：** 修复已经存在的边界漂移问题，清除明显失效的注册与死代码。
 
 | 任务 | 说明 |
 |------|------|
-| 创建 `source/scene/` 目录结构 | index.ts + 4 个子模块 |
-| 迁移序列化逻辑 → `serializer.ts` | 改用 utils/serializer |
-| 迁移节点查找逻辑 → `node-registry.ts` | |
-| 迁移动画上下文逻辑 → `animation-context.ts` | |
-| 迁移 fallback 逻辑 → `editor-fallback.ts` | |
-| 更新 `package.json` 场景脚本入口 | 指向 scene/index.ts |
+| 梳理 `package.json` contributions.messages | 核对每个 message 是否有实现 |
+| 建立 `source/ipc/contracts.ts` | 定义主进程与面板契约 |
+| 对齐 `updateToolStatus*` / `getToolManagerState` | 修复当前签名与结构漂移 |
+| 决策 `open-tool-manager` / `panels/tool-manager` 去留 | 补实现或删除 |
+| 增加 IPC smoke test | 覆盖关键消息调用链 |
 
-**验收标准：** 场景相关操作全部正常，动画工具功能不回归。
+**验收标准：**
 
-### 阶段四：工具文件重构（优先级 P1-P2）
+- 主进程与面板消息签名一致
+- 无“注册了但未实现”的 message
+- `tsc` 与契约测试同时通过
 
-**目标：** 逐个工具文件接入新基础设施，消除重复代码。
+### 阶段一：单一注册源与主进程拆分（优先级 P0）
 
-按照影响范围从小到大的顺序重构：
+**目标：** 先解决工具事实来源分叉和主进程职责混杂。
+
+| 任务 | 说明 |
+|------|------|
+| 创建 `source/services/tool-registry.ts` | 统一工具元数据与实例工厂 |
+| 重构 `mcp-server.ts` 消费 registry | 去掉手写工具列表 |
+| 重构 `tool-manager.ts` 消费 registry | 去掉重复 `require()` 与 fallback 清单 |
+| 创建 `server-controller.ts` | 服务生命周期管理 |
+| 创建 `settings-repository.ts` / `tool-config-service.ts` | 配置与业务职责拆分 |
+| 精简 `main.ts` | 改为薄 IPC facade |
+
+**验收标准：**
+
+- 工具注册源只有 1 份
+- `main.ts` 不再直接承担业务编排
+- 新增工具只需改 registry 即可生效
+
+### 阶段二：基础设施建设（优先级 P1）
+
+**目标：** 建立后续迁移需要的基础模块。
+
+| 任务 | 说明 |
+|------|------|
+| 创建 `source/utils/serializer.ts` | 合并三处序列化实现 |
+| 创建 `source/utils/error-codes.ts` | 定义 `ToolErrorCode` |
+| 创建 `source/tools/schemas/common.ts` | 公共 schema 片段 |
+| 创建 `source/tools/base-tool.ts` | 显式 handler map 的基类 |
+| 拆分 `source/types/` | 类型分层并保持兼容 |
+
+**验收标准：**
+
+- 基础模块编译通过
+- 有最小单元测试覆盖 serializer / error-codes / registry 派生结果
+
+### 阶段三：Editor Bridge 与 scene 拆分（优先级 P1）
+
+**目标：** 收敛 Editor API 调用，并拆掉 `scene.ts` 的过重职责。
+
+| 任务 | 说明 |
+|------|------|
+| 创建 `editor-bridge/` | scene / asset-db / preferences / builder |
+| 创建 `scene/` 目录结构 | methods + node-registry + animation-context + fallback |
+| 保留 `source/scene.ts` facade | 降低 Cocos 接入风险 |
+| 迁移 fallback 与动画上下文逻辑 | 不再散落在工具中 |
+
+**验收标准：**
+
+- 主要工具不再直接写 Editor 魔法字符串
+- 场景相关功能手测通过
+- 场景入口接入方式稳定，无加载回归
+
+### 阶段四：工具分批迁移与 Prefab 退役（优先级 P1-P2）
+
+**目标：** 逐个工具接入新基础设施，并完成 prefab v1 退役。
+
+迁移顺序建议：
 
 | 顺序 | 工具文件 | 重构内容 |
 |------|----------|----------|
-| 1 | `undo-tools.ts`（86 行）| 继承 BaseToolExecutor，async/await |
-| 2 | `array-property-tools.ts`（90 行）| 同上 |
-| 3 | `scene-script-tools.ts`（142 行）| 同上，替换 serializeResult |
-| 4 | `preferences-tools.ts`（207 行）| 同上，接入 editor-bridge |
-| 5 | `project-tools.ts`（331 行）| 同上 |
-| 6 | `prefab-tools.ts`（438 行）| 同上 |
-| 7 | `animation-tools.ts`（419 行）| 同上，接入 animation-context |
-| 8 | `debug-tools.ts`（578 行）| 同上 |
-| 9 | `scene-tools.ts`（495 行）| 同上 |
-| 10 | `asset-tools.ts`（1266 行）| 同上，接入 asset-messages |
-| 11 | `node-tools.ts`（1541 行）| 同上 |
-| 12 | `component-tools.ts`（2132 行）| 同上，替换 serializeToolResult |
+| 1 | `undo-tools.ts` | BaseToolExecutor + async/await |
+| 2 | `array-property-tools.ts` | 同上 |
+| 3 | `scene-script-tools.ts` | 替换序列化与 Promise 包装 |
+| 4 | `preferences-tools.ts` | 接入 editor-bridge |
+| 5 | `project-tools.ts` | 接入 editor-bridge |
+| 6 | `prefab-tools.ts` | 迁移 v1 逻辑，删除 legacy 依赖 |
+| 7 | `animation-tools.ts` | 接入 animation-context |
+| 8 | `debug-tools.ts` | 接入日志与错误码 |
+| 9 | `scene-tools.ts` | 接入 scene bridge |
+| 10 | `asset-tools.ts` | 接入 asset bridge |
+| 11 | `node-tools.ts` | 接入统一 node / scene bridge |
+| 12 | `component-tools.ts` | 最后处理最大复杂度文件 |
 
-**验收标准：** 每个工具重构后，对应功能的手动测试通过，无行为回归。
+**验收标准：**
 
-### 阶段五：日志与收尾（优先级 P2）
+- 每迁移一个工具，补对应 smoke test 或手测记录
+- `PrefabToolsV2` 不再依赖 v1
+- 全仓无遗留 `legacyPrefabTools`
+
+### 阶段五：Panel、日志与收尾（优先级 P2）
 
 | 任务 | 说明 |
 |------|------|
-| 在 `mcp-server.ts` 添加请求日志中间件 | 受 enableDebugLog 控制 |
-| ToolResponse 增加 errorCode 字段 | 结构化错误输出 |
-| 删除 `source/tools/prefab-tools.ts`（v1）| 确认无引用后删除 |
-| 更新 README，说明新的工具开发规范 | |
+| 默认面板状态治理 | 轮询清理、生命周期收口 |
+| 决定旧 `tool-manager` 面板去留 | 重构或删除 |
+| 在 `mcp-server.ts` 添加统一日志 | 受 `enableDebugLog` 控制 |
+| 收紧 JSON 解析策略 | 优先报错而不是自动修复 |
+| 更新 README 与开发规范 | 同步新的注册与开发流程 |
 
 ---
 
@@ -662,12 +687,15 @@ private async handleQuery(args: any): Promise<ToolResponse> {
 
 | 指标 | 现状 | 优化后 |
 |------|------|--------|
+| 主进程 / 面板 IPC 契约 | 运行时漂移，`tsc` 无法发现 | `contracts.ts` 统一约束，关键调用可被测试覆盖 |
+| 工具注册源数量 | 3 份以上 | 1 份（`tool-registry.ts`） |
 | 魔法字符串 API 调用处数 | ~100 处 | 0（全部收敛到 editor-bridge）|
 | 序列化实现数量 | 3 份（行为不一致）| 1 份（统一参数化）|
 | 重复 Promise 包装代码 | ~200 行 | 0 |
 | execute() 分发样板代码 | 12 份 switch 语句 | BaseToolExecutor 统一处理 |
+| prefab 核心实现来源 | v1 / v2 混用 | 全部收敛到 v2 |
 | scene.ts 体积 | 1469 行（单文件）| ~200 行/模块（5 个文件）|
-| 新增工具所需了解文件数 | 5-6 个 | 2-3 个（base-tool + domain types + bridge）|
+| 新增工具所需了解文件数 | 5-6 个 | 3-4 个（registry + base-tool + domain types + bridge）|
 | 错误可诊断性 | 仅有 message 字符串 | errorCode + message 分级 |
 
 ---
@@ -677,12 +705,14 @@ private async handleQuery(args: any): Promise<ToolResponse> {
 优化完成后，新增工具的标准流程：
 
 1. **定义 domain 类型**：在 `source/types/domain.ts` 补充相关接口
-2. **添加 Editor 消息**：在 `source/editor-bridge/` 对应文件添加类型化封装
-3. **创建工具文件**：继承 `BaseToolExecutor`，实现 `getTools()` 和 `handle*()` 方法
-4. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
-5. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象
-6. **注册工具**：在 `mcp-server.ts` 的 `initializeTools()` 中实例化
-7. **场景侧逻辑**：新增到 `source/scene/` 对应模块，而非追加到 index.ts
+2. **补齐 IPC / 配置类型**：如涉及主进程与面板通信，先更新 `source/ipc/contracts.ts`
+3. **添加 Editor 消息**：在 `source/editor-bridge/` 对应文件添加类型化封装
+4. **创建工具文件**：继承 `BaseToolExecutor`，实现显式 handler map 与 `getTools()`
+5. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
+6. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象
+7. **注册工具**：只在 `source/services/tool-registry.ts` 中注册一次
+8. **场景侧逻辑**：新增到 `source/scene/` 对应模块，而非继续堆进 `scene.ts`
+9. **补最小验证**：至少补一条 registry / contract / smoke test 或手测记录
 
 ---
 
