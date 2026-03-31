@@ -1,5 +1,6 @@
 import { readFileSync } from 'fs-extra';
 import { join } from 'path';
+import * as ipcClient from '../../ipc/client';
 
 module.exports = Editor.Panel.define({
     listeners: {
@@ -41,7 +42,7 @@ module.exports = Editor.Panel.define({
     methods: {
         async loadToolManagerState(this: any) {
             try {
-                this.toolManagerState = await Editor.Message.request('cocos-mcp-server', 'getToolManagerState');
+                this.toolManagerState = await ipcClient.getToolManagerState();
                 this.currentConfiguration = this.toolManagerState.currentConfiguration;
                 this.configurations = this.toolManagerState.configurations;
                 this.availableTools = this.toolManagerState.availableTools;
@@ -184,8 +185,7 @@ module.exports = Editor.Panel.define({
                 this.updateToolCheckboxes(category, enabled);
 
                 // 然后发送到后端
-                await Editor.Message.request('cocos-mcp-server', 'updateToolStatusBatch', 
-                    this.currentConfiguration.id, updates);
+                await ipcClient.updateToolStatusBatch(this.currentConfiguration.id, updates);
                 
             } catch (error) {
                 console.error('Failed to toggle category tools:', error);
@@ -225,8 +225,12 @@ module.exports = Editor.Panel.define({
 
                 // 然后发送到后端
                 console.log(`Sending to backend: configId=${this.currentConfiguration.id}, category=${category}, name=${name}, enabled=${enabled}`);
-                const result = await Editor.Message.request('cocos-mcp-server', 'updateToolStatus', 
-                    this.currentConfiguration.id, category, name, enabled);
+                const result = await ipcClient.updateToolStatus(
+                    this.currentConfiguration.id,
+                    category,
+                    name,
+                    enabled,
+                );
                 console.log('Backend response:', result);
                 
             } catch (error) {
@@ -324,10 +328,9 @@ module.exports = Editor.Panel.define({
 
             try {
                 if (this.editingConfig) {
-                    await Editor.Message.request('cocos-mcp-server', 'updateToolConfiguration', 
-                        this.editingConfig.id, { name, description });
+                    await ipcClient.updateToolConfiguration(this.editingConfig.id, { name, description });
                 } else {
-                    await Editor.Message.request('cocos-mcp-server', 'createToolConfiguration', name, description);
+                    await ipcClient.createToolConfiguration(name, description);
                 }
                 
                 this.hideModal('configModal');
@@ -347,8 +350,7 @@ module.exports = Editor.Panel.define({
             
             if (confirmed) {
                 try {
-                    await Editor.Message.request('cocos-mcp-server', 'deleteToolConfiguration', 
-                        this.currentConfiguration.id);
+                    await ipcClient.deleteToolConfiguration(this.currentConfiguration.id);
                     await this.loadToolManagerState();
                 } catch (error) {
                     console.error('Failed to delete configuration:', error);
@@ -362,7 +364,7 @@ module.exports = Editor.Panel.define({
             if (!configId) return;
 
             try {
-                await Editor.Message.request('cocos-mcp-server', 'setCurrentToolConfiguration', configId);
+                await ipcClient.setCurrentToolConfiguration(configId);
                 await this.loadToolManagerState();
             } catch (error) {
                 console.error('Failed to apply configuration:', error);
@@ -374,8 +376,7 @@ module.exports = Editor.Panel.define({
             if (!this.currentConfiguration) return;
 
             try {
-                const result = await Editor.Message.request('cocos-mcp-server', 'exportToolConfiguration', 
-                    this.currentConfiguration.id);
+                const result = await ipcClient.exportToolConfiguration(this.currentConfiguration.id);
                 
                 Editor.Clipboard.write('text', result.configJson);
                 Editor.Dialog.info('导出成功', { detail: '配置已复制到剪贴板' });
@@ -398,7 +399,7 @@ module.exports = Editor.Panel.define({
             }
 
             try {
-                await Editor.Message.request('cocos-mcp-server', 'importToolConfiguration', configJson);
+                await ipcClient.importToolConfiguration(configJson);
                 this.hideModal('importModal');
                 await this.loadToolManagerState();
                 Editor.Dialog.info('导入成功', { detail: '配置已成功导入' });
@@ -431,8 +432,7 @@ module.exports = Editor.Panel.define({
                 this.updateToolsDisplay();
 
                 // 然后发送到后端
-                await Editor.Message.request('cocos-mcp-server', 'updateToolStatusBatch', 
-                    this.currentConfiguration.id, updates);
+                await ipcClient.updateToolStatusBatch(this.currentConfiguration.id, updates);
                 
             } catch (error) {
                 console.error('Failed to select all tools:', error);
@@ -470,8 +470,7 @@ module.exports = Editor.Panel.define({
                 this.updateToolsDisplay();
 
                 // 然后发送到后端
-                await Editor.Message.request('cocos-mcp-server', 'updateToolStatusBatch', 
-                    this.currentConfiguration.id, updates);
+                await ipcClient.updateToolStatusBatch(this.currentConfiguration.id, updates);
                 
             } catch (error) {
                 console.error('Failed to deselect all tools:', error);
@@ -526,12 +525,11 @@ module.exports = Editor.Panel.define({
 
             try {
                 // 确保当前配置已保存到后端
-                await Editor.Message.request('cocos-mcp-server', 'updateToolConfiguration', 
-                    this.currentConfiguration.id, {
-                        name: this.currentConfiguration.name,
-                        description: this.currentConfiguration.description,
-                        tools: this.currentConfiguration.tools
-                    });
+                await ipcClient.updateToolConfiguration(this.currentConfiguration.id, {
+                    name: this.currentConfiguration.name,
+                    description: this.currentConfiguration.description,
+                    tools: this.currentConfiguration.tools
+                });
                 
                 Editor.Dialog.info('保存成功', { detail: '配置更改已保存' });
             } catch (error) {

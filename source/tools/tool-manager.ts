@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { ToolConfig, ToolConfiguration, ToolManagerSettings, ToolDefinition } from '../types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createToolManagerState, ToolManagerState, ToolStatusUpdate } from '../ipc/contracts';
 
 export class ToolManager {
     private settings: ToolManagerSettings;
@@ -342,7 +343,7 @@ export class ToolManager {
         console.log(`Backend: Settings saved successfully`);
     }
 
-    public updateToolStatusBatch(configId: string, updates: { category: string; name: string; enabled: boolean }[]): void {
+    public updateToolStatusBatch(configId: string, updates: ToolStatusUpdate[]): void {
         console.log(`Backend: updateToolStatusBatch called with configId: ${configId}`);
         console.log(`Backend: Current configurations count: ${this.settings.configurations.length}`);
         console.log(`Backend: Current config IDs:`, this.settings.configurations.map(c => c.id));
@@ -403,15 +404,16 @@ export class ToolManager {
         return currentConfig.tools.filter(tool => tool.enabled);
     }
 
-    public getToolManagerState() {
+    public getToolManagerState(): ToolManagerState {
         const currentConfig = this.getCurrentConfiguration();
-        return {
-            success: true,
-            availableTools: currentConfig ? currentConfig.tools : this.getAvailableTools(),
+
+        return createToolManagerState({
             selectedConfigId: this.settings.currentConfigId,
+            currentConfiguration: currentConfig,
             configurations: this.getConfigurations(),
+            availableTools: currentConfig ? [...currentConfig.tools] : this.getAvailableTools(),
             maxConfigSlots: this.settings.maxConfigSlots
-        };
+        });
     }
 
     private saveSettings(): void {

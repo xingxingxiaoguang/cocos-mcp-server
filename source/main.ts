@@ -2,9 +2,19 @@ import { MCPServer } from './mcp-server';
 import { readSettings, saveSettings } from './settings';
 import { MCPServerSettings } from './types';
 import { ToolManager } from './tools/tool-manager';
+import { ToolStatusUpdate } from './ipc/contracts';
 
 let mcpServer: MCPServer | null = null;
 let toolManager: ToolManager;
+
+function syncEnabledToolsToServer(): void {
+    if (!mcpServer) {
+        return;
+    }
+
+    const enabledTools = toolManager.getEnabledTools();
+    mcpServer.updateEnabledTools(enabledTools);
+}
 
 /**
  * @en Registration method for the main process of Extension
@@ -27,9 +37,7 @@ export const methods: { [key: string]: (...any: any) => any } = {
      */
     async startServer() {
         if (mcpServer) {
-            // 确保使用最新的工具配置
-            const enabledTools = toolManager.getEnabledTools();
-            mcpServer.updateEnabledTools(enabledTools);
+            syncEnabledToolsToServer();
             await mcpServer.start();
         } else {
             console.warn('[MCP插件] mcpServer 未初始化');
@@ -85,30 +93,11 @@ export const methods: { [key: string]: (...any: any) => any } = {
         return mcpServer ? mcpServer.getAvailableTools() : [];
     },
 
-    getFilteredToolsList() {
-        if (!mcpServer) return [];
-        
-        // 获取当前启用的工具
-        const enabledTools = toolManager.getEnabledTools();
-        
-        // 更新MCP服务器的启用工具列表
-        mcpServer.updateEnabledTools(enabledTools);
-        
-        return mcpServer.getFilteredTools(enabledTools);
-    },
     /**
      * @en Get server settings
      * @zh 获取服务器设置
      */
     async getServerSettings() {
-        return mcpServer ? mcpServer.getSettings() : readSettings();
-    },
-
-    /**
-     * @en Get server settings (alternative method)
-     * @zh 获取服务器设置（替代方法）
-     */
-    async getSettings() {
         return mcpServer ? mcpServer.getSettings() : readSettings();
     },
 
@@ -152,44 +141,22 @@ export const methods: { [key: string]: (...any: any) => any } = {
         }
     },
 
-    async updateToolStatus(category: string, toolName: string, enabled: boolean) {
+    async updateToolStatus(configId: string, category: string, toolName: string, enabled: boolean) {
         try {
-            const currentConfig = toolManager.getCurrentConfiguration();
-            if (!currentConfig) {
-                throw new Error('没有当前配置');
-            }
-            
-            toolManager.updateToolStatus(currentConfig.id, category, toolName, enabled);
-            
-            // 更新MCP服务器的工具列表
-            if (mcpServer) {
-                const enabledTools = toolManager.getEnabledTools();
-                mcpServer.updateEnabledTools(enabledTools);
-            }
-            
+            toolManager.updateToolStatus(configId, category, toolName, enabled);
+            syncEnabledToolsToServer();
             return { success: true };
         } catch (error: any) {
             throw new Error(`更新工具状态失败: ${error.message}`);
         }
     },
 
-    async updateToolStatusBatch(updates: any[]) {
+    async updateToolStatusBatch(configId: string, updates: ToolStatusUpdate[]) {
         try {
             console.log(`[Main] updateToolStatusBatch called with updates count:`, updates ? updates.length : 0);
-            
-            const currentConfig = toolManager.getCurrentConfiguration();
-            if (!currentConfig) {
-                throw new Error('没有当前配置');
-            }
-            
-            toolManager.updateToolStatusBatch(currentConfig.id, updates);
-            
-            // 更新MCP服务器的工具列表
-            if (mcpServer) {
-                const enabledTools = toolManager.getEnabledTools();
-                mcpServer.updateEnabledTools(enabledTools);
-            }
-            
+
+            toolManager.updateToolStatusBatch(configId, updates);
+            syncEnabledToolsToServer();
             return { success: true };
         } catch (error: any) {
             throw new Error(`批量更新工具状态失败: ${error.message}`);
@@ -232,8 +199,7 @@ export function load() {
     mcpServer = new MCPServer(settings);
     
     // 初始化MCP服务器的工具列表
-    const enabledTools = toolManager.getEnabledTools();
-    mcpServer.updateEnabledTools(enabledTools);
+    syncEnabledToolsToServer();
     
     // 如果设置了自动启动，则启动服务器
     if (settings.autoStart) {

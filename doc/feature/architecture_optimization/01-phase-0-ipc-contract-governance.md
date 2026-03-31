@@ -277,12 +277,12 @@ panel -> ipc/client -> main.ts -> ToolManager / ToolConfigService
 
 ### 完成标记
 
-- [ ] 已新增 `source/ipc/contracts.ts`
-- [ ] 已新增 `source/ipc/client.ts`
-- [ ] `updateToolStatus*` 参数顺序统一
-- [ ] `getToolManagerState` 返回结构统一
-- [ ] 无“注册了但未实现”的 message
-- [ ] IPC smoke test 可执行
+- [x] 已新增 `source/ipc/contracts.ts`
+- [x] 已新增 `source/ipc/client.ts`
+- [x] `updateToolStatus*` 参数顺序统一
+- [x] `getToolManagerState` 返回结构统一
+- [x] 无“注册了但未实现”的 message
+- [x] IPC smoke test 可执行
 
 ---
 
