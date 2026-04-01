@@ -1,6 +1,7 @@
 # 架构优化实施总览
 
 > 来源：`doc/plan/architecture-optimization-plan.md` v1.2  
+> 若与旧 `plan` 文档冲突，以当前 `doc/feature/architecture_optimization/` 实施文档为准  
 > 目标：把总体架构规划拆成可顺序执行、可验收、可回滚的实施方案  
 > 适用范围：`source/main.ts`、`source/mcp-server.ts`、`source/tools/`、`source/panels/`、`source/scene.ts` 及新增基础设施目录
 
@@ -10,6 +11,9 @@
 
 - 先修边界漂移和死代码，再做分层重构，避免在错误契约上继续加代码。
 - 先建立单一事实来源，再做工具和场景侧迁移，避免“迁一次、改三处”。
+- `source/types/` 垃圾桶治理必须与架构迁移同步执行，不允许把类型归属重构当作“以后再说”的附属任务。
+- 当前迁移基线只覆盖 Cocos Creator `3.8.x`，不为假想的多版本兼容预埋额外层级或目录。
+- 本轮 Step 3/4 的迁移样板不把 `builder` 能力和 `open-tool-manager` / 遗留面板入口作为主线范围。
 - 全程保留兼容 facade，避免一次性大爆炸式重写。
 - 每个阶段都要求“编译验证 + 行为验证 + 回滚点”，不接受只有文档完成。
 
@@ -22,8 +26,8 @@
 | Step 0 | `01-phase-0-ipc-contract-governance.md` | 修复 IPC 契约漂移、注册未实现消息、遗留面板去留 | P0 |
 | Step 1 | `02-phase-1-single-registry-main-process-split.md` | 建立单一工具注册源，拆主进程服务职责 | P0 |
 | Step 2 | `03-phase-2-foundation-modules.md` | 建基础模块：types、serializer、error-codes、schema、base-tool | P1 |
-| Step 3 | `04-phase-3-capability-layer-scene-split.md` | 建立 `tools -> use-cases -> capabilities -> drivers -> messages` 分层，并拆分 `scene.ts` | P1 |
-| Step 4 | `05-phase-4-domain-migration-prefab-refactor.md` | 把重型工具迁入 capability/use-case 架构，并退役 prefab legacy 实现 | P1-P2 |
+| Step 3 | `04-phase-3-capability-layer-scene-split.md` | 建立 `tools -> capabilities -> contract/driver` 三层架构，并拆分 `scene.ts` | P1 |
+| Step 4 | `05-phase-4-domain-migration-prefab-refactor.md` | 把重型工具迁入 `capabilities -> contract/driver` 架构，并退役 prefab legacy 实现 | P1-P2 |
 | Step 5 | `06-phase-5-panel-logging-governance.md` | 让 Panel、日志、协议解析和开发规范与新分层架构对齐 | P2 |
 
 ---
@@ -50,8 +54,9 @@ Step 5 Panel / 日志 / 规范收尾
 - Step 1 完成前，不允许继续在 `mcp-server.ts` 和 `tool-manager.ts` 手写新增工具列表。
 - Step 2 完成前，不启动大规模工具类迁移，只能做最小接线验证。
 - Step 3 完成前，禁止继续新增散落的 `Editor.Message.request('scene' | 'asset-db' | ...)`，并禁止把版本差异逻辑继续写回 tools。
+- 自 Step 3 起，类型归属重构必须与领域迁移同步推进：新增 capability/driver/shared 类型不得继续落入 `source/types/`，重型领域迁移时必须同步剪除对应的 `source/types/` 依赖。
 - Step 4 完成前，不删除 `source/scene.ts` facade，不删除兼容 re-export。
-- Step 4 期间，重型工具必须通过 `use-case / capability` 迁移，不接受只有 message wrapper 的“伪迁移”。
+- Step 4 期间，重型工具必须通过 `capability / contract / driver` 迁移，不接受只有 message wrapper 的“伪迁移”。
 
 ---
 
@@ -92,8 +97,8 @@ curl -s -X POST http://127.0.0.1:3000/mcp \
 - Step 0：IPC 参数顺序、状态结构、未实现 message 清理
 - Step 1：工具注册源一致性、配置同步、服务生命周期拆分
 - Step 2：基础模块行为一致性，尤其是 serializer / error-codes / base-tool
-- Step 3：分层骨架稳定、scene facade 加载稳定、低风险领域 capability 试点贯通
-- Step 4：重型工具 use-case / capability 迁移不回归，尤其是 prefab legacy 退役后的创建 / 实例化 / 回退链路
+- Step 3：分层骨架稳定、scene facade 加载稳定、低风险领域 capability 试点贯通，以及 capability/bridge/shared 类型已脱离 `source/types/`
+- Step 4：重型工具 capability / contract / driver 迁移不回归，尤其是 prefab legacy 退役后的创建 / 实例化 / 回退链路
 - Step 5：默认面板生命周期、请求级日志、严格 JSON 解析与开发规范同步
 
 ---
@@ -120,10 +125,11 @@ feature/architecture-optimization
 
 ## 7. 当前阶段重点提醒
 
-- `package.json` 已声明 `open-tool-manager`，但当前主进程没有 `openToolManager()` 实现，这是第一优先级止血项。
-- `source/panels/tool-manager/index.ts` 传入 `configId`，而 `source/main.ts` 的 `updateToolStatus()` / `updateToolStatusBatch()` 当前按“隐式当前配置”处理，这必须先统一。
+- `open-tool-manager` 与旧 `tool-manager` 面板属于历史治理项；当前文档保留记录，但它们不作为本轮 Step 3 重做的主线阻塞项。
+- 当前迁移模板只服务于 `3.8.x`；不要为了未来版本预先拆分多套 driver 目录或兼容层。
 - `source/mcp-server.ts` 与 `source/tools/tool-manager.ts` 仍各自维护一份工具初始化逻辑，新增 `animation` 后更证明当前不是单一事实来源。
-- 仅有 message wrapper 不足以解决 tools 膨胀，Step 3 起必须按 `use-case / capability / driver` 分层推进。
+- 仅有 message wrapper 不足以解决 tools 膨胀，Step 3 起必须按 `tools / capabilities / contract / driver` 分层推进。
+- `source/types/` 当前仍是历史垃圾桶；后续任何架构迁移都必须同步处理类型归属，不允许继续向该目录追加 capability、driver 或 shared 类型。
 - `source/tools/v2/prefab-tools.ts` 仍通过 `legacyPrefabTools` 依赖 `source/tools/prefab-tools.ts`，Step 4 必须真正剪掉。
 
 ---

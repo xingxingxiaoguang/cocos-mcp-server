@@ -2,7 +2,7 @@
 
 > 前置依赖：Step 1  
 > 预计改动量：中  
-> 目标：为后续迁移准备统一类型、统一序列化、统一错误码、统一 schema 与统一执行基类
+> 目标：为后续迁移准备过渡性基础模块，包括统一类型入口、统一序列化、统一错误码、统一 schema 与统一执行基类
 
 ---
 
@@ -17,6 +17,11 @@
 - 每个工具类都重复 `execute()` 分发和 Promise 包装
 
 这些问题不先解决，后续工具迁移会持续放大重复代码。
+
+补充约束：
+
+- 本 Step 中对 `source/types/` 的拆分是过渡态，不是最终类型归属方案。
+- 从 Step 3 开始，capability / bridge / shared 类型必须继续从 `source/types/` 迁出，不能把本 Step 的临时整理误当成终局结构。
 
 ---
 
@@ -56,7 +61,7 @@ source/tools/v2/prefab-tools.ts
 
 ### 3.1 类型分层
 
-建议拆分如下：
+建议拆分如下，作为 Step 2 的过渡性整理：
 
 - `mcp.ts`
   - `ToolDefinition`
@@ -76,7 +81,7 @@ source/tools/v2/prefab-tools.ts
 - `editor.ts`
   - 对 `scene` / `asset-db` / `preferences` 返回值的最小声明
 
-`source/types/index.ts` 保留 re-export，避免一次性改全仓 import。
+`source/types/index.ts` 保留 re-export，避免一次性改全仓 import；但这只用于兼容过渡，自 Step 3 起不再承接新增 capability / bridge / shared 类型。
 
 ### 3.2 统一序列化
 
@@ -169,6 +174,7 @@ export abstract class BaseToolExecutor implements ToolExecutor {
 - 新建 `mcp.ts` / `domain.ts` / `config.ts` / `editor.ts`
 - `index.ts` 全量 re-export
 - 本阶段不强制逐文件改 import 路径
+- 这一步只解决“先分开、先可迁移”，不代表 `source/types/` 仍然是后续新架构的长期归宿
 
 ### 4.2 引入统一 serializer
 
@@ -212,6 +218,7 @@ export abstract class BaseToolExecutor implements ToolExecutor {
 - `serializer.ts` 必须处理循环引用、深层对象、大数组截断。
 - `BaseToolExecutor` 不使用字符串反射，不允许 `(this as any)[toolName]`。
 - `types/index.ts` 在 Step 4 完成前不能删除。
+- `source/types/` 只作为兼容过渡层保留；自 Step 3 起不得继续新增 capability、bridge 或 shared 类型。
 
 ---
 

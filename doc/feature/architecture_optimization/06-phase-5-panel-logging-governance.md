@@ -2,7 +2,7 @@
 
 > 前置依赖：Step 4  
 > 预计改动量：中  
-> 目标：让 UI、日志、协议解析和开发规范与新分层架构保持一致，防止 `tools -> use-cases -> capabilities -> drivers -> messages` 再次被旁路破坏
+> 目标：让 UI、日志、协议解析和开发规范与新分层架构保持一致，防止 `tools -> capabilities -> contract -> driver` 再次被旁路破坏
 
 ---
 
@@ -10,11 +10,11 @@
 
 本文件应被视为“可单独执行”的 Step 5 收尾说明。新会话执行时，不依赖历史对话，只依赖以下前提：
 
-- Step 4 已基本完成，至少重型工具已经按 `tool -> use-case -> capability -> driver -> message` 分层
+- Step 4 已基本完成，至少重型工具已经按 `tool -> capability -> contract -> driver` 分层
 - 默认面板仍为当前唯一或主要 UI 入口候选
 - `mcp-server.ts` 仍是请求接入与工具执行链路的统一入口
 
-如果 Step 4 还没有把工具执行链路稳定分层，本 Step 中“按 use-case / capability / driver 记录日志”就没有实施基础，应先回补 Step 4。
+如果 Step 4 还没有把工具执行链路稳定分层，本 Step 中“按 capability / contract / driver 记录日志”就没有实施基础，应先回补 Step 4。
 
 ### 0.1 本 Step 的输入
 
@@ -30,13 +30,13 @@
 完成后必须交付：
 
 - 默认面板或最终保留面板的稳定生命周期
-- 可定位到 `tool / use-case / capability / driver` 的统一日志
+- 可定位到 `tool / capability / contract / driver` 的统一日志
 - 收紧后的 JSON 协议解析策略
 - 明确的新分层开发规范
 
 ### 0.3 执行纪律
 
-- 不允许每个 tool / use-case / capability 自己各打一套日志
+- 不允许每个 tool / capability 自己各打一套日志
 - 不允许面板旁路调用主进程内部实现
 - 不允许 README 仍把新工具开发描述成“直接在 tools 中对接 Editor API”
 
@@ -47,7 +47,7 @@
 即使 Step 3-4 完成分层，如果收尾阶段不治理这些入口，架构仍然会返脏：
 
 - 面板层可能继续旁路调用旧 IPC 或直接假设主进程内部结构
-- `mcp-server.ts` 如果没有统一日志，后续很难定位 use-case / capability / driver 哪一层出错
+- `mcp-server.ts` 如果没有统一日志，后续很难定位 capability / contract / driver 哪一层出错
 - MCP JSON 解析如果继续“猜着修”，会掩盖真正的调用错误
 - README 和开发规范如果不更新，新代码还会回到旧模式
 
@@ -72,8 +72,8 @@ doc/plan/architecture-optimization-plan.md
 
 ```text
 source/utils/request-logger.ts
-source/types/logging.ts
-source/application/execution/           # 如需统一 tool/use-case 执行上下文
+source/shared/types/logging.ts
+source/application/execution/           # 如需统一 tool/capability 执行上下文
 ```
 
 ---
@@ -116,7 +116,6 @@ source/application/execution/           # 如需统一 tool/use-case 执行上�
 - `requestId`
 - MCP 方法
 - tool 名
-- use-case 名
 - capability 名
 - driver 名
 - 执行耗时
@@ -132,7 +131,6 @@ export interface RequestLogEntry {
   requestId: string;
   method: string;
   toolName?: string;
-  useCase?: string;
   capability?: string;
   driver?: string;
   durationMs: number;
@@ -146,7 +144,7 @@ export interface RequestLogEntry {
 - `enableDebugLog=true` 时输出详细日志
 - 默认日志保持简洁，不刷屏
 - 长脚本、长 JSON、资源文本内容要截断
-- 不让 tool、use-case、capability 各自重复打一套日志
+- 不让 tool、capability 各自重复打一套日志
 
 ### 4.3 接线位置
 
@@ -155,18 +153,18 @@ export interface RequestLogEntry {
 - `handleHttpRequest()`
 - `handleMCPRequest()`
 - `executeToolCall()`
-- use-case 执行入口或统一 execution context
+- capability 调用入口或统一 execution context
 
 目标：
 
-- 从一次请求可以顺着看到 tool -> use-case -> capability -> driver 的路径
+- 从一次请求可以顺着看到 tool -> capability -> contract -> driver 的路径
 
 ### 4.4 新会话执行建议
 
 新会话里建议先确认三件事，再开始写日志体系：
 
 1. `mcp-server.ts` 当前的统一执行入口在哪里。
-2. use-case / capability / driver 的调用链上，哪个位置最适合挂 execution context。
+2. capability / contract / driver 的调用链上，哪个位置最适合挂 execution context。
 3. 是否已经存在可复用的请求 ID、debug 开关和错误码出口。
 
 ---
@@ -200,7 +198,7 @@ README 与内部开发规范至少补充以下规则：
 
 ### 6.1 工具开发规则
 
-- 新工具默认只写 `tools + use-cases`
+- 新工具默认只写 `tools + capabilities`
 - 工具层不得直接调用 `Editor.Message.request(...)`
 - 工具层不得直接依赖 message 常量
 - 工具层不得处理版本兼容与 fallback
@@ -214,8 +212,8 @@ README 与内部开发规范至少补充以下规则：
 ### 6.3 Driver 开发规则
 
 - 版本差异只能收敛在 driver
-- message 名和参数差异只能收敛在 `messages/` + `drivers/`
-- 新版本适配优先新增 driver，不回流污染 tool
+- bridge 契约统一收敛在 `editor-bridge/<domain>/contract.ts`
+- 当前基线只覆盖 `3.8.x`，默认先内聚到单文件 `driver.ts`，只有后续真的出现明显分叉时才升级为多文件 driver 结构
 
 ### 6.4 注册与入口规则
 
@@ -247,7 +245,7 @@ npm run build
 至少验证：
 
 - 默认面板不旁路调用主进程内部实现
-- 日志可定位到 use-case / capability / driver
+- 日志可定位到 capability / contract / driver
 - README 与文档已明确新分层纪律
 - 新增代码审查时可据文档判断是否越层
 
@@ -256,7 +254,7 @@ npm run build
 - [ ] 默认面板状态治理完成
 - [ ] 旧 `tool-manager` 面板已重构或删除
 - [ ] `mcp-server.ts` 已接入统一请求日志
-- [ ] 日志已能定位 tool / use-case / capability / driver
+- [ ] 日志已能定位 tool / capability / contract / driver
 - [ ] JSON 自动修复逻辑已删除或降级为受控兼容路径
 - [ ] README 与开发规范已同步到新分层架构
 

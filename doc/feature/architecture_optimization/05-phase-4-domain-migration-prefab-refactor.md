@@ -1,8 +1,8 @@
-# Step 4: Use-Case / Capability 扩展迁移与 Prefab 能力重构
+# Step 4: Capability 扩展迁移与 Prefab 能力重构
 
 > 前置依赖：Step 3  
 > 预计改动量：大  
-> 目标：把重型工具逐步迁移到 `use-cases + capabilities + drivers` 架构，并完成 prefab 能力从 v1/v2 混合实现向统一能力模型的收敛
+> 目标：把重型工具逐步迁移到 `capabilities + contract/driver` 架构，并完成 prefab 能力从 v1/v2 混合实现向统一能力模型的收敛
 
 ---
 
@@ -10,13 +10,13 @@
 
 本文件应被视为“可单独执行”的 Step 4 实施说明。新会话执行时，不依赖历史对话，只依赖仓库代码与以下 Step 3 产物已经存在或至少具备骨架：
 
-- `application/use-cases/`
+- `shared/types/`
+- `capabilities/models/`
 - `capabilities/interfaces/`
 - `capabilities/services/`
-- `editor-bridge/runtime-profile.ts`
-- `editor-bridge/capability-registry.ts`
-- `editor-bridge/messages/`
-- `editor-bridge/drivers/`
+- `editor-bridge/runtime/`
+- `editor-bridge/<domain>/contract.ts`
+- `editor-bridge/<domain>/driver.ts`
 - `source/scene.ts` facade 与 `source/scene/` 拆分结构
 
 如果 Step 3 只完成了部分骨架，必须先补齐最小骨架后，再进入本 Step。不要在没有 capability 边界的前提下直接迁重型工具。
@@ -35,7 +35,8 @@
 
 - 重型领域已有稳定 capability interface
 - tool 只负责入口层职责，不再承载大段底层编排
-- `prefab` 领域已形成独立的 use-case / capability / driver 链路
+- `prefab` 领域已形成独立的 capability / contract / driver 链路
+- 与已迁移领域对应的 `source/types/` 历史类型依赖已被同步剪除
 - legacy prefab 依赖被剪除
 
 ### 0.3 执行纪律
@@ -43,6 +44,7 @@
 - 不允许跨多个重型领域混改成一个提交
 - 不允许只把旧逻辑搬文件位置，不重构边界
 - 不允许在 prefab 迁移时重新把 scene / asset / node 底层细节硬编码回单个工具文件
+- 不允许把 `source/types/` 重构继续后置；每迁一个领域，就必须同步迁走该领域的类型归属
 
 ---
 
@@ -59,9 +61,10 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 
 这个阶段的重点不再是“把工具切到 bridge”，而是：
 
-- 把工具业务编排稳定沉到 use-case
-- 把统一能力沉到 capability
+- 把工具业务编排稳定沉到 capability
+- 把桥接契约稳定沉到 `contract.ts`
 - 把版本/引擎差异沉到 driver
+- 把历史 `source/types/` 中属于该领域的类型同步拆回各自目录
 - 让 `tools` 文件不再随着领域复杂度线性膨胀
 
 ---
@@ -84,17 +87,21 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 每个领域统一按以下顺序推进：
 
 1. 定义 capability interface
-2. 定义 use-case 输入输出
-3. 抽 driver 内的版本/Editor API 对接逻辑
-4. 将 tool 改为 use-case 调用方
-5. 删除该领域内的散落 `Editor.Message.request(...)`
-6. 补 smoke test 或手测记录
+2. 定义 `editor-bridge/<domain>/contract.ts`
+3. 定义 capability 输入输出模型
+4. 抽 driver 内的 Editor API 对接逻辑与少量版本分支
+5. 将 tool 改为 capability 调用方
+6. 同步迁走该领域在 `source/types/` 中的历史类型
+7. 删除该领域内的散落 `Editor.Message.request(...)`
+8. 补 smoke test 或手测记录
 
 要求：
 
 - 不允许只迁 message wrapper，不迁业务编排边界
-- 不允许把 driver 逻辑伪装成 use-case
+- 不允许把 driver 逻辑伪装成 capability
 - 不允许工具文件继续保留多步 Editor API 编排
+- 不允许领域代码迁完后仍然依赖 `source/types/index.ts` 获取该领域类型
+- 默认不新增全局 `editor-bridge/messages/`，也不默认按版本拆 driver 目录
 
 ---
 
@@ -113,7 +120,7 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 
 driver 负责：
 
-- `scene` channel message 差异
+- `scene` channel 调用
 - 是否需要走 scene script fallback
 - 场景 ready / dirty / snapshot 等底层差异
 
@@ -131,7 +138,7 @@ driver 负责：
 
 driver 负责：
 
-- `asset-db` 不同 message 差异
+- `asset-db` 协议调用
 - url / uuid / path 的互转细节
 - meta 与 asset 的读写差异
 
@@ -175,11 +182,11 @@ driver 负责：
 - `resetComponent(ref)`
 - `executeComponentMethod(input)`
 
-### 5.3 Use-case 边界
+### 5.3 Capability 编排边界
 
 这一波最容易出问题的是“节点和组件的组合动作”。
 
-建议把以下逻辑明确放进 use-case，而不是 capability：
+建议把以下逻辑明确放进 capability service 的编排层，而不是 driver：
 
 - 创建节点后立即挂组件
 - 查找目标节点后批量修改多个组件字段
@@ -189,7 +196,7 @@ driver 负责：
 原因：
 
 - 这些属于业务编排，不属于单一底层能力
-- 如果塞进 capability，会让 capability 重新变成“大杂烩服务”
+- 如果直接塞进 driver，会让底层适配层重新承担业务决策
 
 ---
 
@@ -208,23 +215,17 @@ driver 负责：
 不是简单“把旧文件删掉”，而是形成稳定的 prefab 领域能力：
 
 - `PrefabCapability`
-- `PrefabUseCases`
+- `PrefabContract`
 - `PrefabDriver`
 
 ### 6.3 建议目录
 
 ```text
-source/application/use-cases/prefab/
-  create-prefab.ts
-  duplicate-prefab.ts
-  instantiate-prefab.ts
-  apply-prefab.ts
-  revert-prefab.ts
-
 source/capabilities/interfaces/prefab.ts
 source/capabilities/services/prefab-service.ts
 
-source/editor-bridge/drivers/cocos-3_8/prefab-driver.ts
+source/editor-bridge/prefab/contract.ts
+source/editor-bridge/prefab/driver.ts
 ```
 
 ### 6.4 PrefabCapability 建议能力
@@ -236,9 +237,9 @@ source/editor-bridge/drivers/cocos-3_8/prefab-driver.ts
 - `revert(input)`
 - `queryPrefab(ref)`
 
-### 6.5 PrefabUseCase 职责
+### 6.5 PrefabCapability 职责
 
-use-case 负责：
+capability service 负责：
 
 - 业务前置条件校验
 - prefab 与 scene / asset / node capability 的组合编排
@@ -247,7 +248,7 @@ use-case 负责：
 
 driver 负责：
 
-- 底层 prefab 消息或替代策略
+- 底层 prefab 协议调用或替代策略
 - asset-db 与 scene 协议对接
 - 不同版本下 prefab 连接方式差异
 
@@ -257,7 +258,7 @@ driver 负责：
 
 - `source/tools/prefab-tools.ts` 删除
 - `legacyPrefabTools` 或等价 legacy 委托归零
-- prefab 相关调用只走 capability / use-case 链路
+- prefab 相关调用只走 capability / contract / driver 链路
 
 ---
 
@@ -287,11 +288,11 @@ driver 负责：
 
 严格按以下顺序：
 
-1. `scene` capability + use-case
-2. `asset` capability + use-case
-3. `node` capability + use-case
-4. `component` capability + use-case
-5. `prefab` capability + use-case，退役 v1
+1. `scene` capability
+2. `asset` capability
+3. `node` capability
+4. `component` capability
+5. `prefab` capability，退役 v1
 6. `debug` / 其他辅助工具收尾
 
 原因：
@@ -310,6 +311,7 @@ driver 负责：
    - 是否仍有隐藏的 v1 helper 依赖
    - duplicate / instantiate / apply / revert 各动作目前真实走哪条路径
 4. 只有在 `scene` 与 `asset` 能力稳定后，才进入 prefab 退役。
+5. 每开始一个领域前，先列出该领域当前依赖了哪些 `source/types/` 类型，并把它们纳入本次迁移范围。
 
 ---
 
@@ -326,9 +328,11 @@ npm run build
 至少验证：
 
 - 重型工具中不再直接出现 `Editor.Message.request(...)`
-- `scene-tools.ts`、`asset-tools.ts`、`node-tools.ts`、`component-tools.ts`、`prefab-tools.ts` 均已通过 use-case / capability 调用
-- capability interface 不泄漏 message 名和底层 channel
+- `scene-tools.ts`、`asset-tools.ts`、`node-tools.ts`、`component-tools.ts`、`prefab-tools.ts` 均已通过 capability 调用
+- capability interface 不泄漏底层 channel 和 bridge 内部契约
 - driver 成为版本差异唯一收口层
+- 已迁移领域不再从 `source/types/index.ts` 获取该领域类型
+- bridge 新增领域默认遵循 `contract.ts + driver.ts` 模板，而不是先拆 `messages/` 或版本目录
 
 ### L3 MCP 验证
 
@@ -346,9 +350,10 @@ npm run build
 
 ### 完成标记
 
-- [ ] `scene` 与 `asset` 已迁入 capability / use-case
-- [ ] `node` 与 `component` 已迁入 capability / use-case
-- [ ] prefab 领域已建立独立 capability / use-case / driver
+- [ ] `scene` 与 `asset` 已迁入 capability / contract / driver
+- [ ] `node` 与 `component` 已迁入 capability / contract / driver
+- [ ] prefab 领域已建立独立 capability / contract / driver
+- [ ] 已迁移领域对应的 `source/types/` 历史类型已同步分流
 - [ ] `source/tools/prefab-tools.ts` 与 legacy 依赖已删除
 - [ ] 重型工具已不再因底层 API 差异膨胀
 
@@ -358,12 +363,12 @@ npm run build
 
 ### 主要风险
 
-- use-case 设计不足，导致业务逻辑仍然回流到 tool
 - capability 粒度过粗，重新形成“大而全服务”
+- 领域代码迁了，但领域类型仍留在 `source/types/`，导致垃圾桶长期无法剪除
 - prefab 迁移时把 asset / scene / node 逻辑重新硬编码进一个文件
 
 ### 回滚建议
 
 - 每个领域单独提交，不跨领域混改
 - prefab 退役与其他领域迁移拆开提交
-- 出现问题优先回滚某个领域的 capability/use-case 接线，不回滚底层 messages 骨架
+- 出现问题优先回滚某个领域的 capability 接线，不回滚底层 messages 骨架
