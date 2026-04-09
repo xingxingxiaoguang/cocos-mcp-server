@@ -1,4 +1,5 @@
-import { ToolConfig, ToolDefinition, ToolExecutor } from '../types';
+import { ToolDefinition, ToolExecutor } from '../mcp/interface';
+import { ToolConfig } from '../tools/interface';
 import { AnimationToolsV2 } from '../tools/v2/animation-tools';
 import { ArrayPropertyToolsV2 } from '../tools/v2/array-property-tools';
 import { AssetToolsV2 } from '../tools/v2/asset-tools';

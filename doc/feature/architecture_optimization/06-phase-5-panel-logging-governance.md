@@ -72,8 +72,8 @@ doc/plan/architecture-optimization-plan.md
 
 ```text
 source/utils/request-logger.ts
-source/shared/types/logging.ts
-source/application/execution/           # 如需统一 tool/capability 执行上下文
+source/mcp/logging.ts                   # 如需抽离请求日志协议模型
+source/application/execution/           # 仅在出现稳定跨 capability 执行上下文时再引入
 ```
 
 ---
@@ -205,7 +205,7 @@ README 与内部开发规范至少补充以下规则：
 
 ### 6.2 能力开发规则
 
-- 新的底层 Editor 能力先加 capability interface
+- 新的底层 Editor 能力先加 capability types
 - 实现在 capability service + driver 中完成
 - 不允许直接在 tool 或 panel 中追加底层 API 对接逻辑
 

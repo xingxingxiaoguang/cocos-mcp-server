@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
 import { safeSerialize } from '../../utils/serializer';
 
 /**

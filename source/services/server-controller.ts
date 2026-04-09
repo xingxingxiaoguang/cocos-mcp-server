@@ -1,5 +1,5 @@
 import { MCPServer } from '../mcp-server';
-import { MCPServerSettings, ServerStatus, ToolDefinition } from '../types';
+import { MCPServerSettings, ServerStatus, ToolDefinition } from '../mcp/interface';
 import { SettingsRepository } from './settings-repository';
 import { ToolConfigService } from './tool-config-service';
 

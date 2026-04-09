@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, SceneInfo } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { SceneInfo } from './scene/interface';
 
 export class SceneToolsV2 implements ToolExecutor {
     getTools(): ToolDefinition[] {

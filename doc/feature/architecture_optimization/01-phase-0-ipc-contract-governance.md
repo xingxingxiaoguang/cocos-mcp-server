@@ -4,6 +4,9 @@
 > 预计改动量：中  
 > 目标：修复主进程与面板的契约漂移，清掉“注册了但没实现”的消息和遗留入口
 
+> 历史说明（2026-04-09）：
+> 本 Step 编写时仓库仍有 `source/types/` 过渡目录；当前仓库已演进为显式类型归属，不再通过 `source/types/index.ts` 做 re-export。
+
 ---
 
 ## 1. 背景
@@ -37,7 +40,6 @@ package.json
 source/main.ts
 source/panels/default/index.ts
 source/panels/tool-manager/index.ts
-source/types/index.ts               # 如需 re-export IPC 相关类型，可最小补充
 ```
 
 ---

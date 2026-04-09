@@ -1,6 +1,7 @@
 import * as http from 'http';
 import * as url from 'url';
-import { MCPServerSettings, ServerStatus, MCPClient, ToolConfig, ToolDefinition, ToolExecutor } from './types';
+import { MCPClient, MCPServerSettings, ServerStatus, ToolDefinition, ToolExecutor, ToolResponse } from './mcp/interface';
+import { ToolConfig } from './tools/interface';
 import { createToolDefinitions, createToolExecutors } from './services/tool-registry';
 
 export class MCPServer {
@@ -71,7 +72,7 @@ export class MCPServer {
         return createToolDefinitions(enabledTools, this.tools);
     }
 
-    public async executeToolCall(toolName: string, args: any): Promise<any> {
+    public async executeToolCall(toolName: string, args: any): Promise<ToolResponse> {
         const parts = toolName.split('_');
         const category = parts[0];
         const toolMethodName = parts.slice(1).join('_');

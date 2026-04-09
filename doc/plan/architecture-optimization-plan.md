@@ -4,6 +4,14 @@
 > 日期: 2026-03-31  
 > 目标: 解决随工具数量膨胀带来的可维护性下降问题，建立清晰的分层架构，统一 API 管理、类型体系、错误处理和工具开发规范，并优先收敛 IPC 契约、工具注册源与历史遗留依赖。
 
+> 状态同步（2026-04-09）：
+> 本文是总体规划文档，其中部分目录设计已被后续实施收敛。
+> 当前仓库真实基线为：
+> 删除 `source/types/`；
+> 使用 `source/mcp/interface.ts`、`source/tools/interface.ts`、`source/json.ts`；
+> 不默认引入 `application/use-cases/`；
+> `editor-bridge` 默认采用按领域的 `contract.ts + driver.ts`，不默认拆全局 `messages/` 或版本目录。
+
 ---
 
 ## 一、现状分析
@@ -18,7 +26,7 @@
 | `source/tools/v2/node-tools.ts` | 1541 | 节点工具 |
 | `source/tools/v2/asset-tools.ts` | 1266 | 资产工具 |
 | `source/tools/v2/` 全部 | 7725 | 12 个工具文件 |
-| `source/types/index.ts` | 156 | 类型定义（所有类型混在一起）|
+| `source/types/index.ts` | 156 | 历史全局类型桶（现已删除）|
 
 ### 1.2 核心架构问题
 
@@ -31,7 +39,7 @@
 
 #### 问题 2：类型定义缺乏分层，业务 Model 散落各处
 
-- `types/index.ts` 将 MCP 协议类型、业务领域 Model、工具配置类型全部混在一起
+- 历史 `types/index.ts` 曾将 MCP 协议类型、业务领域 Model、工具配置类型全部混在一起
 - 工具文件内部定义了大量跨工具共享的私有接口（如 `NodeCreateSpec`、`ComponentSetContext`）
 - 这些接口无法被其他工具文件引用，导致相似结构在多处独立定义
 
@@ -153,28 +161,22 @@ return new Promise((resolve) => {
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
-│                Application / Use-Case 层                 │
-│  application/use-cases/                                  │
-│  承载工具业务核心逻辑与跨 capability 编排                │
-└──────────────┬──────────────────────────────────────────┘
-               │
-┌──────────────▼──────────────────────────────────────────┐
 │                  Capability / Service 层                 │
-│  capabilities/interfaces  ─  稳定语义能力接口            │
-│  capabilities/services    ─  统一能力服务                │
+│  capabilities/<domain>/interface.ts ─ 稳定语义能力与模型 │
+│  capabilities/<domain>/service.ts   ─ 统一能力服务与编排 │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
-│            Editor Bridge / Driver / Message 层           │
-│  runtime-profile / capability-registry                   │
-│  drivers/  ─  版本差异 / fallback / Editor 对接          │
-│  messages/ ─  最薄原始 request                           │
+│            Editor Bridge / Contract / Driver 层          │
+│  runtime/profile.ts  / runtime/registry.ts               │
+│  <domain>/contract.ts ─ bridge 契约                      │
+│  <domain>/driver.ts   ─ 版本差异 / fallback / Editor 对接 │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
 │                    场景进程层（scene/）                   │
-│  methods  node-registry  animation-context               │
-│  serialization  editor-fallback                          │
+│  animation/  node/  component/                           │
+│  按领域聚合 scene methods 与运行时辅助                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -195,62 +197,53 @@ source/
 │   ├── tool-config-service.ts       # 工具配置业务
 │   └── settings-repository.ts       # 设置读写
 │
-├── types/                           # 类型分层
-│   ├── index.ts                     # 统一 re-export
-│   ├── mcp.ts                       # MCP 协议类型（ToolDefinition、ToolResponse 等）
-│   ├── domain.ts                    # 业务领域 Model（NodeInfo、AssetInfo 等）
-│   ├── config.ts                    # 配置类型（MCPServerSettings、ToolManagerSettings 等）
-│   └── editor.ts                    # Cocos Editor API 返回值类型声明
+├── mcp/
+│   └── interface.ts                 # MCP 协议类型（ToolDefinition、ToolResponse 等）
+├── json.ts                          # 基础通用 JSON 类型（JsonValue 等）
 │
-├── application/                     # ★ 新增：工具业务 use-case 层
-│   └── use-cases/
-│       ├── animation/
-│       ├── preferences/
-│       ├── project/
-│       ├── scene/
-│       ├── asset/
-│       ├── node/
-│       ├── component/
-│       └── prefab/
+├── tools/
+│   ├── interface.ts                 # ToolConfig / ToolConfiguration / ToolManagerSettings
+│   └── ...
 │
-├── capabilities/                    # ★ 新增：稳定能力接口与服务
-│   ├── interfaces/
-│   │   ├── animation.ts
-│   │   ├── asset.ts
-│   │   ├── component.ts
-│   │   ├── node.ts
-│   │   ├── preferences.ts
-│   │   ├── project.ts
-│   │   ├── prefab.ts
-│   │   └── scene.ts
-│   └── services/
-│       ├── animation-service.ts
-│       ├── preferences-service.ts
-│       ├── project-service.ts
-│       ├── scene-service.ts
-│       ├── asset-service.ts
-│       ├── node-service.ts
-│       ├── component-service.ts
-│       └── prefab-service.ts
+├── capabilities/                    # ★ 新增：按领域组织的稳定能力层
+│   ├── animation/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── preferences/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── project/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── scene/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── asset/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── node/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   ├── component/
+│   │   ├── interface.ts
+│   │   └── service.ts
+│   └── prefab/
+│       ├── interface.ts
+│       └── service.ts
 │
-├── editor-bridge/                   # ★ 新增：runtime profile / drivers / messages
-│   ├── index.ts                     # 统一 re-export
-│   ├── runtime-profile.ts           # 版本能力探测
-│   ├── capability-registry.ts       # capability 与 driver 装配
-│   ├── models.ts                    # bridge 层稳定模型
-│   ├── messages/
-│   │   ├── scene-messages.ts
-│   │   ├── asset-messages.ts
-│   │   ├── preferences-messages.ts
-│   │   ├── builder-messages.ts
-│   │   └── project-messages.ts
-│   └── drivers/
-│       └── cocos-3_8/
-│           ├── animation-driver.ts
-│           ├── asset-driver.ts
-│           ├── component-driver.ts
-│           ├── node-driver.ts
-│           ├── preferences-driver.ts
+├── editor-bridge/                   # ★ 新增：按领域桥接
+│   ├── runtime/
+│   │   ├── profile.ts
+│   │   └── registry.ts
+│   ├── animation/
+│   │   ├── contract.ts
+│   │   └── driver.ts
+│   ├── preferences/
+│   │   ├── contract.ts
+│   │   └── driver.ts
+│   └── project/
+│       ├── contract.ts
+│       └── driver.ts
 │           ├── prefab-driver.ts
 │           ├── project-driver.ts
 │           └── scene-driver.ts
@@ -261,11 +254,15 @@ source/
 │   └── schema-helpers.ts            # 公共 inputSchema 片段（uuid、path 等）
 │
 ├── scene/                           # ★ 重构：scene.ts 拆分
-│   ├── methods.ts                   # 场景进程 methods 主体
-│   ├── serialization.ts             # safeSerialize（迁移自 scene.ts）
-│   ├── node-registry.ts             # findNodeByUuid、节点遍历
-│   ├── animation-context.ts         # 动画编辑上下文管理
-│   └── editor-fallback.ts           # tryEditorThenEngine 通用逻辑
+│   ├── animation/
+│   │   ├── methods.ts               # 动画领域 scene methods
+│   │   ├── runtime.ts               # 动画运行时与编辑辅助
+│   │   └── fallback.ts              # 动画领域 editor->engine fallback
+│   ├── node/
+│   │   ├── methods.ts               # 节点领域 scene methods
+│   │   └── registry.ts              # findNodeByUuid、节点遍历
+│   └── component/
+│       └── methods.ts               # 组件领域 scene methods
 │
 ├── scene.ts                         # 兼容 facade，继续作为 Cocos 场景入口
 │
@@ -386,16 +383,16 @@ export const TOOL_REGISTRY: ToolRegistration[] = [
 
 - `tools`
   - 只做 MCP tool 定义、入参校验、action 路由、`ToolResponse`
-- `application/use-cases`
-  - 承载工具业务核心逻辑
-- `capabilities/interfaces`
-  - 对 use-case 暴露稳定语义能力
-- `capabilities/services`
+- `capabilities/<domain>/interface.ts`
+  - 对上暴露稳定语义能力定义与输入输出模型
+- `capabilities/<domain>/service.ts`
   - 调度具体 driver，对外提供统一能力实现
-- `editor-bridge/drivers`
+- `editor-bridge/<domain>/contract.ts`
+  - 收敛该领域 bridge 契约
+- `editor-bridge/<domain>/driver.ts`
   - 处理版本差异、fallback、底层 Editor/Engine 对接
-- `editor-bridge/messages`
-  - 只保留最薄的 message request 封装
+- `editor-bridge/runtime/`
+  - 只保留 profile、registry 等运行时装配设施
 
 #### 关键原则
 
@@ -425,38 +422,33 @@ driver 内部再去决定：
 
 #### Runtime Profile
 
-新增 `runtime-profile.ts` 探测当前版本和能力开关，并由 `capability-registry.ts` 选择 driver。
+新增 `editor-bridge/runtime/profile.ts` 探测当前版本和能力开关，并由 `editor-bridge/runtime/registry.ts` 选择 driver。
 
 ---
 
 ### 3.5 类型分层重构
 
-**目标：** 区分 MCP 协议类型、业务 Model、配置类型、Editor 返回值类型与 IPC 契约类型。
+**目标：** 区分 MCP 协议类型、工具配置类型、基础 JSON 类型、领域类型与 IPC 契约类型。
 
-**拆分方案：**
+**当前基线：**
 
-- `source/types/mcp.ts`
+- `source/mcp/interface.ts`
   - `ToolDefinition`
   - `ToolResponse`
   - `ToolExecutor`
   - `ServerStatus`
-- `source/types/domain.ts`
-  - `NodeInfo`
-  - `NodeCreateSpec`
-  - `ComponentInfo`
-  - `PrefabInfo`
-  - `AnimationClipInfo`
-- `source/types/config.ts`
   - `MCPServerSettings`
+- `source/tools/interface.ts`
   - `ToolConfig`
   - `ToolConfiguration`
   - `ToolManagerSettings`
-- `source/types/editor.ts`
-  - Editor / asset-db / scene 返回值声明
+- `source/json.ts`
+  - `JsonValue`
+  - `JsonObject`
+- 领域目录
+  - 各领域稳定输入 / 输出模型随领域目录归位
 - `source/ipc/contracts.ts`
   - 面板与主进程的消息契约
-
-`source/types/index.ts` 继续做 re-export，保持兼容。
 
 ---
 
@@ -556,11 +548,12 @@ export abstract class BaseToolExecutor implements ToolExecutor {
 
 **拆分建议：**
 
-- `source/scene/node-registry.ts`
-- `source/scene/animation-context.ts`
-- `source/scene/editor-fallback.ts`
-- `source/scene/serialization.ts`
-- `source/scene/methods.ts`
+- `source/scene/animation/methods.ts`
+- `source/scene/animation/runtime.ts`
+- `source/scene/animation/fallback.ts`
+- `source/scene/node/methods.ts`
+- `source/scene/node/registry.ts`
+- `source/scene/component/methods.ts`
 
 `source/scene.ts` 只做：
 
@@ -697,7 +690,7 @@ export { methods } from './scene/methods';
 | 创建 `source/utils/error-codes.ts` | 定义 `ToolErrorCode` |
 | 创建 `source/tools/schemas/common.ts` | 公共 schema 片段 |
 | 创建 `source/tools/base-tool.ts` | 显式 handler map 的基类 |
-| 拆分 `source/types/` | 类型分层并保持兼容 |
+| 拆分并最终退役 `source/types/` | 完成从过渡层到显式归属的演进 |
 
 **验收标准：**
 
@@ -706,22 +699,21 @@ export { methods } from './scene/methods';
 
 ### 阶段三：Capability Layer 与 scene 拆分（优先级 P1）
 
-**目标：** 建立 `tools -> use-cases -> capabilities -> drivers -> messages` 分层骨架，并拆掉 `scene.ts` 的过重职责。
+**目标：** 建立 `tools -> capabilities -> contract/driver` 分层骨架，并拆掉 `scene.ts` 的过重职责。
 
 | 任务 | 说明 |
 |------|------|
-| 创建 `application/use-cases/` | 低风险领域业务编排试点 |
-| 创建 `capabilities/interfaces` / `services` | 稳定能力接口与统一服务 |
-| 创建 `editor-bridge/runtime-profile.ts` | 版本能力探测 |
-| 创建 `editor-bridge/capability-registry.ts` | capability 与 driver 装配 |
-| 创建 `editor-bridge/messages/` / `drivers/` | message 与版本对接分层 |
+| 创建 `capabilities/<domain>/interface.ts + service.ts` | 按领域组织稳定能力接口、模型与服务 |
+| 创建 `editor-bridge/runtime/profile.ts` | 版本能力探测 |
+| 创建 `editor-bridge/runtime/registry.ts` | capability 与 driver 装配 |
+| 创建 `editor-bridge/<domain>/contract.ts + driver.ts` | 按领域桥接与版本对接分层 |
 | 创建 `scene/` 目录结构并保留 facade | 降低 Cocos 接入风险 |
 | 迁移 `preferences/project/animation` 试点 | 验证分层模板 |
 
 **验收标准：**
 
 - tools 不再直接写 Editor 魔法字符串
-- 低风险工具已通过 use-case / capability 调用
+- 低风险工具已通过 capability 调用
 - 场景入口接入方式稳定，无加载回归
 
 ### 阶段四：重型领域迁移与 Prefab 退役（优先级 P1-P2）
@@ -778,11 +770,11 @@ export { methods } from './scene/methods';
 
 优化完成后，新增工具的标准流程：
 
-1. **定义 domain 类型**：在 `source/types/domain.ts` 补充相关接口
+1. **定义领域类型**：在对应领域的 `interface.ts` 或同级领域目录中补充稳定输入 / 输出模型
 2. **补齐 IPC / 配置类型**：如涉及主进程与面板通信，先更新 `source/ipc/contracts.ts`
-3. **定义 capability 接口**：先在 `source/capabilities/interfaces/` 建立稳定能力面
-4. **实现 use-case**：在 `source/application/use-cases/` 写业务编排
-5. **实现 driver / message**：在 `source/editor-bridge/` 处理版本差异与底层 request
+3. **定义 capability interface**：先在 `source/capabilities/<domain>/interface.ts` 建立稳定能力面与输入输出模型
+4. **实现 capability service**：在 `source/capabilities/<domain>/service.ts` 写业务编排
+5. **实现 contract / driver**：在 `source/editor-bridge/<domain>/` 处理版本差异与底层 request
 6. **创建工具文件**：继承 `BaseToolExecutor`，只做入口层职责
 7. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
 8. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象

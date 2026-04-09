@@ -1,4 +1,8 @@
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../types';
+import { AnimationCapability } from '../../capabilities/animation/interface';
+import { getCapabilityRegistry } from '../../editor-bridge/runtime/registry';
+import { ToolDefinition, ToolResponse } from '../../mcp/interface';
+import { makeError, ToolErrorCode } from '../../utils/error-codes';
+import { BaseToolExecutor, ToolHandler } from '../base-tool';
 
 type AnimationClipAction =
     | 'list'
@@ -13,14 +17,13 @@ type AnimationClipAction =
     | 'query_value_at_frame'
     | 'save';
 
-interface ResolvedClipRef {
-    clipUuid: string;
-    path: string;
-    name: string;
-    type?: string;
-}
+export class AnimationToolsV2 extends BaseToolExecutor {
+    private readonly animation: AnimationCapability = getCapabilityRegistry().animation;
 
-export class AnimationToolsV2 implements ToolExecutor {
+    protected readonly handlers: Record<string, ToolHandler> = {
+        clip: async (args: any) => this.handleClip(args),
+    };
+
     getTools(): ToolDefinition[] {
         return [
             {
@@ -74,11 +77,7 @@ export class AnimationToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        if (toolName !== 'clip') {
-            throw new Error(`Unknown tool: ${toolName}`);
-        }
-
+    private async handleClip(args: any): Promise<ToolResponse> {
         const action = args?.action as AnimationClipAction | undefined;
         switch (action) {
             case 'list':
@@ -104,34 +103,16 @@ export class AnimationToolsV2 implements ToolExecutor {
             case 'save':
                 return await this.saveClip(args);
             default:
-                return { success: false, error: `Unknown clip action: ${String(action)}` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown clip action: ${String(action)}`);
         }
     }
 
     private async listClips(): Promise<ToolResponse> {
-        try {
-            const results: any[] = await Editor.Message.request('asset-db', 'query-assets', {
-                pattern: 'db://assets/**/*.anim'
-            });
-
-            const animations = (Array.isArray(results) ? results : []).map((item: any) => ({
-                uuid: item.uuid,
-                path: item.url || item.path,
-                name: item.name || this.getNameFromPath(item.url || item.path || ''),
-                type: item.type,
-                size: item.fileSize ?? item.size
-            }));
-
-            return {
-                success: true,
-                data: {
-                    animations,
-                    count: animations.length
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        const result = await this.animation.listClips();
+        return {
+            success: true,
+            data: result,
+        };
     }
 
     private async createClip(args: any): Promise<ToolResponse> {
@@ -146,109 +127,96 @@ export class AnimationToolsV2 implements ToolExecutor {
             return { success: false, error: 'savePath must end with .anim' };
         }
 
-        return await this.callSceneMethod('createAnimationClip', [
+        return this.toToolResponse(await this.animation.createClip({
             savePath,
-            args?.name,
-            typeof args?.duration === 'number' ? args.duration : 1,
-            typeof args?.sample === 'number' ? args.sample : 60
-        ]);
+            name: args?.name,
+            duration: args?.duration,
+            sample: args?.sample,
+        }));
     }
 
     private async getClipInfo(args: any): Promise<ToolResponse> {
         const nodeUuid = this.requireString(args?.nodeUuid, 'nodeUuid');
         if (!nodeUuid.success) return nodeUuid.response;
-
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('getAnimationClipInfo', [args.nodeUuid, clip.clipUuid]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.getClipInfo({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+        }));
     }
 
     private async listEditableProperties(args: any): Promise<ToolResponse> {
         const validation = this.requireNodeAndClipContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('listAnimationEditableProperties', [args.nodeUuid, clip.clipUuid]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.listEditableProperties({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+        }));
     }
 
     private async addTrack(args: any): Promise<ToolResponse> {
         const validation = this.requireTrackContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('addAnimationTrack', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.addTrack({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+        }));
     }
 
     private async removeTrack(args: any): Promise<ToolResponse> {
         const validation = this.requireTrackContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('removeAnimationTrack', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.removeTrack({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+        }));
     }
 
     private async createKey(args: any): Promise<ToolResponse> {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('createAnimationKey', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey,
-                args.frame,
-                args.value
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.createKey({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+            frame: args.frame,
+            value: args.value,
+        }));
     }
 
     private async setKeyframe(args: any): Promise<ToolResponse> {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('setAnimationKeyframe', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey,
-                args.frame,
-                args.value,
-                args.curve || {}
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.setKeyframe({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+            frame: args.frame,
+            value: args.value,
+            curve: args.curve || {},
+        }));
     }
 
     private async removeKey(args: any): Promise<ToolResponse> {
@@ -258,122 +226,50 @@ export class AnimationToolsV2 implements ToolExecutor {
             return { success: false, error: 'frames must be a non-empty array for action=remove_key' };
         }
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('removeAnimationKey', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey,
-                args.frames
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.removeKey({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+            frames: args.frames,
+        }));
     }
 
     private async queryValueAtFrame(args: any): Promise<ToolResponse> {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('queryAnimationValueAtFrame', [
-                args.nodeUuid,
-                clip.clipUuid,
-                args.nodePath,
-                args.propKey,
-                args.frame
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.queryValueAtFrame({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+            nodePath: args.nodePath,
+            propKey: args.propKey,
+            frame: args.frame,
+        }));
     }
 
     private async saveClip(args: any): Promise<ToolResponse> {
         const validation = this.requireNodeAndClipContext(args);
         if (!validation.success) return validation.response;
 
-        try {
-            const clip = await this.resolveClipRef(args);
-            return await this.callSceneMethod('saveAnimationClip', [
-                args.nodeUuid,
-                clip.clipUuid
-            ]);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        return this.toToolResponse(await this.animation.saveClip({
+            nodeUuid: args.nodeUuid,
+            clipUuid: this.optionalTrimmedString(args?.clipUuid),
+            uuid: this.optionalTrimmedString(args?.uuid),
+            path: this.optionalTrimmedString(args?.path),
+        }));
     }
 
-    private async callSceneMethod(method: string, args: any[]): Promise<ToolResponse> {
-        try {
-            const result = await Editor.Message.request('scene', 'execute-scene-script', {
-                name: 'cocos-mcp-server',
-                method,
-                args
-            });
-
-            if (result === undefined || result === null) {
-                return {
-                    success: false,
-                    error: `Scene method '${method}' returned nothing. Check package.json contributions.scene.methods.`
-                };
-            }
-
-            if (result && typeof result === 'object' && 'success' in result) {
-                return result as ToolResponse;
-            }
-
-            return { success: true, data: result };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    }
-
-    private async resolveClipRef(args: any): Promise<ResolvedClipRef> {
-        const requestedPath = typeof args?.path === 'string' ? args.path.trim() : '';
-        const requestedUuid = typeof args?.clipUuid === 'string' && args.clipUuid.trim()
-            ? args.clipUuid.trim()
-            : (typeof args?.uuid === 'string' ? args.uuid.trim() : '');
-
-        if (!requestedPath && !requestedUuid) {
-            throw new Error('Provide clipUuid, uuid, or path to identify the animation clip');
-        }
-
-        if (requestedPath) {
-            const info: any = await Editor.Message.request('asset-db', 'query-asset-info', requestedPath);
-            if (!info?.uuid) {
-                throw new Error(`Animation clip not found at path: ${requestedPath}`);
-            }
-            if (!String(info.url || requestedPath).endsWith('.anim')) {
-                throw new Error(`Asset is not an animation clip: ${requestedPath}`);
-            }
-            return {
-                clipUuid: info.uuid,
-                path: info.url || requestedPath,
-                name: info.name || this.getNameFromPath(info.url || requestedPath),
-                type: info.type
-            };
-        }
-
-        const assetPath: string | null = await Editor.Message.request('asset-db', 'query-url', requestedUuid);
-        if (!assetPath) {
-            throw new Error(`Animation clip UUID not found: ${requestedUuid}`);
-        }
-
-        const info: any = await Editor.Message.request('asset-db', 'query-asset-info', assetPath);
-        if (!info?.uuid) {
-            throw new Error(`Failed to resolve animation clip info for UUID: ${requestedUuid}`);
-        }
-        if (!String(info.url || assetPath).endsWith('.anim')) {
-            throw new Error(`Asset is not an animation clip: ${requestedUuid}`);
-        }
-
+    private toToolResponse(result: { data: unknown; warning?: string; message?: string }): ToolResponse {
         return {
-            clipUuid: info.uuid,
-            path: info.url || assetPath,
-            name: info.name || this.getNameFromPath(info.url || assetPath),
-            type: info.type
+            success: true,
+            data: result.data,
+            ...(result.warning ? { warning: result.warning } : {}),
+            ...(result.message ? { message: result.message } : {}),
         };
     }
 
@@ -424,15 +320,18 @@ export class AnimationToolsV2 implements ToolExecutor {
         if (typeof value !== 'string' || !value.trim()) {
             return {
                 success: false,
-                response: { success: false, error: `${fieldName} is required` }
+                response: makeError(ToolErrorCode.MISSING_REQUIRED, `${fieldName} is required`)
             };
         }
         return { success: true };
     }
 
-    private getNameFromPath(assetPath: string): string {
-        const normalized = String(assetPath || '').replace(/\\/g, '/');
-        const baseName = normalized.split('/').pop() || normalized;
-        return baseName.replace(/\.anim$/i, '');
+    private optionalTrimmedString(value: unknown): string | undefined {
+        if (typeof value !== 'string') {
+            return undefined;
+        }
+
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
     }
 }

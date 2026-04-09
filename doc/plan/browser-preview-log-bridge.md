@@ -424,9 +424,9 @@ preview-template/mcp-log-bridge.js
 - `searchBrowserLogs()`
 - `clearBrowserLogs()`
 
-#### `source/types/index.ts`
+#### 结构化日志类型归属
 
-建议新增结构化日志类型：
+建议新增结构化日志类型，并归位到 `source/mcp/` 或对应领域目录，而不是重新引入全局 `source/types/`：
 
 - `BrowserLogEntry`
 - `BrowserLogBatch`
@@ -574,4 +574,3 @@ preview-template/mcp-log-bridge.js
 - 在 `debug_logs` 中统一查询
 
 这条链路比 DevTools 协议更轻，比系统日志更准，比编辑器广播更贴近真实运行时，适合作为 Cocos Creator MCP 的标准浏览器日志方案。
-

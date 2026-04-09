@@ -658,7 +658,7 @@ window.__MCP_PREVIEW_MARK__(name, payload)
 | 文件 | 改动 |
 |------|------|
 | `source/mcp-server.ts` | 新增 preview ingest API、resources 路由、工具注册 |
-| `source/types/index.ts` | 新增 preview/design 相关类型 |
+| 领域目录或 `source/mcp/` | 新增 preview/design 相关类型，避免恢复全局 `source/types/` |
 | `source/tools/v2/debug-tools.ts` | 扩展 browser log 查询 |
 | `source/tools/v2/project-tools.ts` | 将 preview 改造成真实会话入口 |
 | `source/tools/v2/preview-tools.ts` | 新增 `runtime` / `capture` |

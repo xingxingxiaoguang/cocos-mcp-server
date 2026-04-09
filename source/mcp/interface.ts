@@ -1,3 +1,11 @@
+export interface MCPServerSettings {
+    port: number;
+    autoStart: boolean;
+    enableDebugLog: boolean;
+    allowedOrigins: string[];
+    maxConnections: number;
+}
+
 export interface ServerStatus {
     running: boolean;
     port: number;

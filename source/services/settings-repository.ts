@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { MCPServerSettings, ToolConfiguration, ToolManagerSettings } from '../types';
+import { MCPServerSettings } from '../mcp/interface';
+import { ToolConfiguration, ToolManagerSettings } from '../tools/interface';
 
 export const DEFAULT_SETTINGS: MCPServerSettings = {
     port: 3000,

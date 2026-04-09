@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { createToolManagerState, ToolManagerState, ToolStatusUpdate } from '../ipc/contracts';
-import { ToolConfig, ToolConfiguration, ToolManagerSettings } from '../types';
+import { ToolConfig, ToolConfiguration, ToolManagerSettings } from '../tools/interface';
 import { SettingsRepository } from './settings-repository';
 import { createAvailableToolConfigs, createToolKey } from './tool-registry';
 

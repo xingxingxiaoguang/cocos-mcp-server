@@ -1,11 +1,3 @@
-export interface MCPServerSettings {
-    port: number;
-    autoStart: boolean;
-    enableDebugLog: boolean;
-    allowedOrigins: string[];
-    maxConnections: number;
-}
-
 export interface ToolConfig {
     category: string;
     name: string;
@@ -26,10 +18,4 @@ export interface ToolManagerSettings {
     configurations: ToolConfiguration[];
     currentConfigId: string;
     maxConfigSlots: number;
-}
-
-export interface ToolManagerState {
-    availableTools: ToolConfig[];
-    currentConfiguration: ToolConfiguration | null;
-    configurations: ToolConfiguration[];
 }

@@ -10,10 +10,9 @@
 
 本文件应被视为“可单独执行”的 Step 4 实施说明。新会话执行时，不依赖历史对话，只依赖仓库代码与以下 Step 3 产物已经存在或至少具备骨架：
 
-- `shared/types/`
-- `capabilities/models/`
-- `capabilities/interfaces/`
-- `capabilities/services/`
+- `source/json.ts`
+- `capabilities/<domain>/interface.ts`
+- `capabilities/<domain>/service.ts`
 - `editor-bridge/runtime/`
 - `editor-bridge/<domain>/contract.ts`
 - `editor-bridge/<domain>/driver.ts`
@@ -33,10 +32,10 @@
 
 完成后必须交付：
 
-- 重型领域已有稳定 capability interface
+- 重型领域已有稳定 capability types
 - tool 只负责入口层职责，不再承载大段底层编排
 - `prefab` 领域已形成独立的 capability / contract / driver 链路
-- 与已迁移领域对应的 `source/types/` 历史类型依赖已被同步剪除
+- 与已迁移领域对应的历史全局类型依赖已被同步剪除
 - legacy prefab 依赖被剪除
 
 ### 0.3 执行纪律
@@ -44,7 +43,7 @@
 - 不允许跨多个重型领域混改成一个提交
 - 不允许只把旧逻辑搬文件位置，不重构边界
 - 不允许在 prefab 迁移时重新把 scene / asset / node 底层细节硬编码回单个工具文件
-- 不允许把 `source/types/` 重构继续后置；每迁一个领域，就必须同步迁走该领域的类型归属
+- 不允许把类型归属治理继续后置；每迁一个领域，就必须同步迁走该领域的历史全局类型归属
 
 ---
 
@@ -64,7 +63,7 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 - 把工具业务编排稳定沉到 capability
 - 把桥接契约稳定沉到 `contract.ts`
 - 把版本/引擎差异沉到 driver
-- 把历史 `source/types/` 中属于该领域的类型同步拆回各自目录
+- 把该领域残留的历史全局类型同步拆回各自目录
 - 让 `tools` 文件不再随着领域复杂度线性膨胀
 
 ---
@@ -86,12 +85,12 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 
 每个领域统一按以下顺序推进：
 
-1. 定义 capability interface
+1. 定义 capability types
 2. 定义 `editor-bridge/<domain>/contract.ts`
 3. 定义 capability 输入输出模型
 4. 抽 driver 内的 Editor API 对接逻辑与少量版本分支
 5. 将 tool 改为 capability 调用方
-6. 同步迁走该领域在 `source/types/` 中的历史类型
+6. 同步迁走该领域残留的历史全局类型
 7. 删除该领域内的散落 `Editor.Message.request(...)`
 8. 补 smoke test 或手测记录
 
@@ -100,7 +99,7 @@ Step 4 要解决的是真正会拖垮维护成本的重型领域：
 - 不允许只迁 message wrapper，不迁业务编排边界
 - 不允许把 driver 逻辑伪装成 capability
 - 不允许工具文件继续保留多步 Editor API 编排
-- 不允许领域代码迁完后仍然依赖 `source/types/index.ts` 获取该领域类型
+- 不允许领域代码迁完后仍然依赖任何全局类型桶获取该领域类型
 - 默认不新增全局 `editor-bridge/messages/`，也不默认按版本拆 driver 目录
 
 ---
@@ -221,8 +220,8 @@ driver 负责：
 ### 6.3 建议目录
 
 ```text
-source/capabilities/interfaces/prefab.ts
-source/capabilities/services/prefab-service.ts
+source/capabilities/prefab/interface.ts
+source/capabilities/prefab/service.ts
 
 source/editor-bridge/prefab/contract.ts
 source/editor-bridge/prefab/driver.ts
@@ -311,7 +310,7 @@ driver 负责：
    - 是否仍有隐藏的 v1 helper 依赖
    - duplicate / instantiate / apply / revert 各动作目前真实走哪条路径
 4. 只有在 `scene` 与 `asset` 能力稳定后，才进入 prefab 退役。
-5. 每开始一个领域前，先列出该领域当前依赖了哪些 `source/types/` 类型，并把它们纳入本次迁移范围。
+5. 每开始一个领域前，先列出该领域当前依赖了哪些历史全局类型，并把它们纳入本次迁移范围。
 
 ---
 
@@ -329,9 +328,9 @@ npm run build
 
 - 重型工具中不再直接出现 `Editor.Message.request(...)`
 - `scene-tools.ts`、`asset-tools.ts`、`node-tools.ts`、`component-tools.ts`、`prefab-tools.ts` 均已通过 capability 调用
-- capability interface 不泄漏底层 channel 和 bridge 内部契约
+- capability types 不泄漏底层 channel 和 bridge 内部契约
 - driver 成为版本差异唯一收口层
-- 已迁移领域不再从 `source/types/index.ts` 获取该领域类型
+- 已迁移领域不再从任何全局类型桶获取该领域类型
 - bridge 新增领域默认遵循 `contract.ts + driver.ts` 模板，而不是先拆 `messages/` 或版本目录
 
 ### L3 MCP 验证
@@ -353,7 +352,7 @@ npm run build
 - [ ] `scene` 与 `asset` 已迁入 capability / contract / driver
 - [ ] `node` 与 `component` 已迁入 capability / contract / driver
 - [ ] prefab 领域已建立独立 capability / contract / driver
-- [ ] 已迁移领域对应的 `source/types/` 历史类型已同步分流
+- [ ] 已迁移领域对应的历史全局类型已同步分流
 - [ ] `source/tools/prefab-tools.ts` 与 legacy 依赖已删除
 - [ ] 重型工具已不再因底层 API 差异膨胀
 
@@ -364,7 +363,7 @@ npm run build
 ### 主要风险
 
 - capability 粒度过粗，重新形成“大而全服务”
-- 领域代码迁了，但领域类型仍留在 `source/types/`，导致垃圾桶长期无法剪除
+- 领域代码迁了，但领域类型仍留在全局类型桶里，导致垃圾桶长期无法剪除
 - prefab 迁移时把 asset / scene / node 逻辑重新硬编码进一个文件
 
 ### 回滚建议

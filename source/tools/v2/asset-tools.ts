@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, AssetInfo } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { AssetInfo } from './asset/interface';
 import * as fs from 'fs';
 import * as path from 'path';
 

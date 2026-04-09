@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, ConsoleMessage, PerformanceStats, ValidationResult, ValidationIssue } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ConsoleMessage, ValidationIssue, ValidationResult } from './debug/interface';
 import * as fs from 'fs';
 import * as path from 'path';
 

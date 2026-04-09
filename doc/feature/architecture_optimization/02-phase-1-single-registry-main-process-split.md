@@ -4,6 +4,9 @@
 > 预计改动量：中到大  
 > 目标：建立唯一工具事实来源，把 `main.ts` 从“业务堆积点”收敛为薄 IPC facade
 
+> 历史说明（2026-04-09）：
+> 本 Step 文档中的 `source/types/index.ts` 仅代表当时的过渡兼容方案；当前仓库已移除该目录，相关类型分别归位到 `source/mcp/interface.ts`、`source/tools/interface.ts` 与领域目录。
+
 ---
 
 ## 1. 背景
@@ -40,7 +43,6 @@ source/main.ts
 source/mcp-server.ts
 source/tools/tool-manager.ts
 source/settings.ts                  # 可保留兼容导出，内部转调 repository
-source/types/index.ts               # 如需新增导出
 ```
 
 ---

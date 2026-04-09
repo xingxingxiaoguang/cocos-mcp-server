@@ -1,4 +1,5 @@
-import { MCPServerSettings, ServerStatus, ToolConfig, ToolConfiguration } from '../types';
+import { MCPServerSettings, ServerStatus } from '../mcp/interface';
+import { ToolConfig, ToolConfiguration } from '../tools/interface';
 
 export const IPC_CHANNEL = 'cocos-mcp-server';
 

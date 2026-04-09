@@ -1,5 +1,5 @@
-import { PrefabInfo } from '../../types/domain';
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types/mcp';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { PrefabInfo } from '../prefab/interface';
 import { PrefabTools } from '../prefab-tools';
 import { actionEnum, dbPath as dbPathSchema, uuid as uuidSchema } from '../schemas/common';
 

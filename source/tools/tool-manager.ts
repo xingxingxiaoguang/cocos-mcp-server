@@ -1,5 +1,5 @@
 import { ToolManagerState, ToolStatusUpdate } from '../ipc/contracts';
-import { ToolConfig, ToolConfiguration } from '../types';
+import { ToolConfig, ToolConfiguration } from './interface';
 import { SettingsRepository } from '../services/settings-repository';
 import { ToolConfigService } from '../services/tool-config-service';
 

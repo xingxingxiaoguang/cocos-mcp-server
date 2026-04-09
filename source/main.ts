@@ -1,4 +1,4 @@
-import { MCPServerSettings } from './types';
+import { MCPServerSettings } from './mcp/interface';
 import { ToolManager } from './tools/tool-manager';
 import { ToolStatusUpdate } from './ipc/contracts';
 import { ServerController } from './services/server-controller';

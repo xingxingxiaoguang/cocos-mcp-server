@@ -1,4 +1,5 @@
-import { MCPServerSettings, ToolConfig, ToolConfiguration, ToolDefinition } from '../types';
+import { MCPServerSettings, ToolDefinition } from '../mcp/interface';
+import { ToolConfig, ToolConfiguration } from '../tools/interface';
 import {
     CreateToolConfigurationResult,
     ExportToolConfigurationResult,

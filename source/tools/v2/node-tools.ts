@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, NodeInfo } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { NodeInfo } from './node/interface';
 import { ComponentToolsV2 } from './component-tools';
 
 interface NodeComponentSpec {

@@ -1,4 +1,4 @@
-import { ToolResponse } from '../types/mcp';
+import { ToolResponse } from '../mcp/interface';
 
 export enum ToolErrorCode {
     INVALID_ARGS = 'INVALID_ARGS',

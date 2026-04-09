@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, PrefabInfo } from '../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../mcp/interface';
+import { PrefabInfo } from './prefab/interface';
 
 export class PrefabTools implements ToolExecutor {
     getTools(): ToolDefinition[] {

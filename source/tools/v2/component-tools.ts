@@ -1,4 +1,5 @@
-import { ToolDefinition, ToolResponse, ToolExecutor, ComponentInfo } from '../../types';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ComponentInfo } from './component/interface';
 import { safeSerialize } from '../../utils/serializer';
 
 interface ComponentSetContext {

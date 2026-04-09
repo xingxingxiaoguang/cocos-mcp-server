@@ -1,4 +1,4 @@
-import { ToolConfiguration } from './types';
+import { ToolConfiguration } from './tools/interface';
 import {
     DEFAULT_SETTINGS,
     DEFAULT_TOOL_MANAGER_SETTINGS,

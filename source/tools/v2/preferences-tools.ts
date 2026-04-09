@@ -1,11 +1,21 @@
-import { ToolDefinition, ToolResponse, ToolExecutor } from '../../types';
+import { PreferencesScope } from '../../capabilities/preferences/interface';
+import { getCapabilityRegistry } from '../../editor-bridge/runtime/registry';
+import { BaseToolExecutor, ToolHandler } from '../base-tool';
+import { ToolDefinition, ToolResponse } from '../../mcp/interface';
+import { makeError, ToolErrorCode } from '../../utils/error-codes';
 
 /**
  * PreferencesToolsV2 — 偏好设置工具 v2
  * 合并自 PreferencesTools
  * 2 个工具: query, modify
  */
-export class PreferencesToolsV2 implements ToolExecutor {
+export class PreferencesToolsV2 extends BaseToolExecutor {
+    private readonly preferences = getCapabilityRegistry().preferences;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        modify: async (args: any) => this.handleModify(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -45,80 +55,42 @@ export class PreferencesToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'query':
-                return await this.handleQuery(args);
-            case 'modify':
-                return await this.handleModify(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
-    }
-
     // ==================== query ====================
 
     private async handleQuery(args: any): Promise<ToolResponse> {
-        if (args.name) {
-            return await this.queryPreferencesConfig(args.name, args.path, args.type);
+        const result = await this.preferences.query({
+            name: this.optionalTrimmedString(args?.name),
+            path: this.optionalTrimmedString(args?.path),
+            type: this.normalizeScope(args?.type),
+        });
+
+        if (result.mode === 'single') {
+            return {
+                success: true,
+                data: {
+                    name: result.target.name,
+                    path: result.target.path,
+                    type: result.target.type,
+                    config: result.config,
+                },
+            };
         }
-        return await this.getAllPreferences();
-    }
 
-    private async queryPreferencesConfig(name: string, path?: string, type: string = 'global'): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const requestArgs = [name];
-            if (path) {
-                requestArgs.push(path);
-            }
-            requestArgs.push(type);
-
-            (Editor.Message.request as any)('preferences', 'query-config', ...requestArgs).then((config: any) => {
-                resolve({
-                    success: true,
-                    data: { name, path, type, config }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
-    }
-
-    private async getAllPreferences(): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const categories = [
-                'general', 'external-tools', 'data-editor', 'laboratory',
-                'extensions', 'preview', 'console', 'native', 'builder'
-            ];
-
-            const preferences: any = {};
-            const queryPromises = categories.map(category => {
-                return Editor.Message.request('preferences', 'query-config', category, undefined, 'global')
-                    .then((config: any) => { preferences[category] = config; })
-                    .catch(() => { preferences[category] = null; });
-            });
-
-            Promise.all(queryPromises).then(() => {
-                const validPreferences = Object.fromEntries(
-                    Object.entries(preferences).filter(([_, value]) => value !== null)
-                );
-                resolve({
-                    success: true,
-                    data: {
-                        categories: Object.keys(validPreferences),
-                        preferences: validPreferences
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        return {
+            success: true,
+            data: {
+                categories: result.categories,
+                preferences: result.preferences,
+            },
+        };
     }
 
     // ==================== modify ====================
 
     private async handleModify(args: any): Promise<ToolResponse> {
-        switch (args.action) {
+        const action = typeof args?.action === 'string' ? args.action : '';
+
+        switch (action) {
             case 'set':
                 return await this.setPreferencesConfig(args.name, args.path, args.value, args.type);
             case 'reset':
@@ -130,71 +102,75 @@ export class PreferencesToolsV2 implements ToolExecutor {
             case 'import':
                 return await this.importPreferences(args.configJson);
             default:
-                return { success: false, error: `Unknown modify action: ${args.action}` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown modify action: ${action || 'undefined'}`);
         }
     }
 
     private async setPreferencesConfig(name: string, path: string, value: any, type: string = 'global'): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            (Editor.Message.request as any)('preferences', 'set-config', name, path, value, type).then((success: boolean) => {
-                if (success) {
-                    resolve({ success: true, message: `Preference '${name}.${path}' updated successfully` });
-                } else {
-                    resolve({ success: false, error: `Failed to update preference '${name}.${path}'` });
-                }
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
+        const normalizedName = this.requireTrimmedString(name, 'name');
+        if (!normalizedName.success) {
+            return normalizedName.response;
+        }
+
+        const normalizedPath = this.requireTrimmedString(path, 'path');
+        if (!normalizedPath.success) {
+            return normalizedPath.response;
+        }
+
+        const result = await this.preferences.set({
+            name: normalizedName.value,
+            path: normalizedPath.value,
+            value,
+            type: this.normalizeScope(type),
         });
+
+        return {
+            success: true,
+            message: result.message,
+        };
     }
 
     private async resetPreferences(name?: string, type: string = 'global'): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            if (!name) {
-                resolve({ success: false, error: 'Resetting all preferences is not supported. Please specify a preference category.' });
-                return;
-            }
-            Editor.Message.request('preferences', 'query-config', name, undefined, 'default').then((defaultConfig: any) => {
-                return (Editor.Message.request as any)('preferences', 'set-config', name, '', defaultConfig, type);
-            }).then((success: boolean) => {
-                if (success) {
-                    resolve({ success: true, message: `Preference category '${name}' reset to default` });
-                } else {
-                    resolve({ success: false, error: `Failed to reset preference category '${name}'` });
-                }
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
+        const normalizedName = this.requireTrimmedString(name, 'name');
+        if (!normalizedName.success) {
+            return makeError(
+                ToolErrorCode.MISSING_REQUIRED,
+                'Resetting all preferences is not supported. Please specify a preference category.',
+            );
+        }
+
+        const result = await this.preferences.reset({
+            name: normalizedName.value,
+            type: this.normalizeScope(type),
         });
+
+        return {
+            success: true,
+            message: result.message,
+        };
     }
 
     private async openPreferencesSettings(tab?: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const requestArgs: any[] = [];
-            if (tab) {
-                requestArgs.push(tab);
-            }
-            (Editor.Message.request as any)('preferences', 'open-settings', ...requestArgs).then(() => {
-                resolve({ success: true, message: `Preferences settings opened${tab ? ` on tab: ${tab}` : ''}` });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
+        const result = await this.preferences.open({
+            tab: this.optionalTrimmedString(tab),
         });
+
+        return {
+            success: true,
+            message: result.message,
+        };
     }
 
     private async exportPreferences(): Promise<ToolResponse> {
-        const prefsResult = await this.getAllPreferences();
-        if (!prefsResult.success) {
-            return prefsResult;
-        }
-        const prefsData = JSON.stringify(prefsResult.data, null, 2);
+        const prefsResult = await this.preferences.export();
         return {
             success: true,
             data: {
-                preferences: prefsResult.data,
-                jsonData: prefsData,
-                message: 'Preferences exported successfully'
-            }
+                categories: prefsResult.categories,
+                preferences: prefsResult.preferences,
+                jsonData: prefsResult.jsonData,
+                message: prefsResult.message,
+            },
         };
     }
 
@@ -202,6 +178,40 @@ export class PreferencesToolsV2 implements ToolExecutor {
         return {
             success: false,
             error: 'Import preferences functionality requires file system access which is not available in this context. Please manually import preferences through the Editor UI.'
+        };
+    }
+
+    private normalizeScope(type?: string): PreferencesScope | undefined {
+        if (type === 'default' || type === 'global' || type === 'local') {
+            return type;
+        }
+        return undefined;
+    }
+
+    private optionalTrimmedString(value: unknown): string | undefined {
+        if (typeof value !== 'string') {
+            return undefined;
+        }
+
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
+    }
+
+    private requireTrimmedString(
+        value: unknown,
+        fieldName: string,
+    ): { success: true; value: string } | { success: false; response: ToolResponse } {
+        const normalized = this.optionalTrimmedString(value);
+        if (!normalized) {
+            return {
+                success: false,
+                response: makeError(ToolErrorCode.MISSING_REQUIRED, `${fieldName} is required`),
+            };
+        }
+
+        return {
+            success: true,
+            value: normalized,
         };
     }
 }

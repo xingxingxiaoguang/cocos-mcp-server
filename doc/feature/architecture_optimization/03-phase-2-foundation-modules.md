@@ -4,6 +4,14 @@
 > 预计改动量：中  
 > 目标：为后续迁移准备过渡性基础模块，包括统一类型入口、统一序列化、统一错误码、统一 schema 与统一执行基类
 
+> 历史说明（2026-04-09）：
+> 本 Step 的 `source/types/` 拆分是过渡态，当前仓库已完成后续演进：
+> `source/types/` 已删除；
+> 协议类型位于 `source/mcp/interface.ts`；
+> 工具配置类型位于 `source/tools/interface.ts`；
+> 基础 JSON 类型位于 `source/json.ts`；
+> 领域类型按领域目录归位。
+
 ---
 
 ## 1. 背景

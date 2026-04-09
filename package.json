@@ -10,7 +10,11 @@
         "build": "tsc",
         "watch": "tsc -w",
         "smoke:ipc": "node ./dist/test/ipc-contract-smoke.js",
-        "smoke:foundation": "node ./dist/test/foundation-modules-smoke.js"
+        "smoke:foundation": "node ./dist/test/foundation-modules-smoke.js",
+        "smoke:preferences": "node ./dist/test/preferences-capability-smoke.js",
+        "smoke:project": "node ./dist/test/project-capability-smoke.js",
+        "smoke:animation": "node ./dist/test/animation-capability-smoke.js",
+        "smoke:scene-facade": "node ./dist/test/scene-facade-smoke.js"
     },
     "description": "i18n:cocos-mcp-server.description",
     "main": "./dist/main.js",

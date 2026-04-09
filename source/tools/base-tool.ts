@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../types/mcp';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../mcp/interface';
 import { makeError, normalizeUnknownError, ToolErrorCode } from '../utils/error-codes';
 
 export type ToolHandler = (args: any) => Promise<ToolResponse>;
