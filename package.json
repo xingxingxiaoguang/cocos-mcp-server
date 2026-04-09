@@ -11,9 +11,14 @@
         "watch": "tsc -w",
         "smoke:ipc": "node ./dist/test/ipc-contract-smoke.js",
         "smoke:foundation": "node ./dist/test/foundation-modules-smoke.js",
+        "smoke:asset": "node ./dist/test/asset-capability-smoke.js",
+        "smoke:component": "node ./dist/test/component-capability-smoke.js",
+        "smoke:node": "node ./dist/test/node-capability-smoke.js",
         "smoke:preferences": "node ./dist/test/preferences-capability-smoke.js",
         "smoke:project": "node ./dist/test/project-capability-smoke.js",
         "smoke:animation": "node ./dist/test/animation-capability-smoke.js",
+        "smoke:prefab": "node ./dist/test/prefab-capability-smoke.js",
+        "smoke:scene": "node ./dist/test/scene-capability-smoke.js",
         "smoke:scene-facade": "node ./dist/test/scene-facade-smoke.js"
     },
     "description": "i18n:cocos-mcp-server.description",
@@ -140,7 +145,7 @@
             }
         },
         "scene": {
-            "script": "./dist/scene.js",
+            "script": "./dist/cocos-entry.js",
             "methods": [
                 "createNewScene",
                 "addComponentToNode",

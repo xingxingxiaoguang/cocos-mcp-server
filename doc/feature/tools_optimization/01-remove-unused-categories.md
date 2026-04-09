@@ -91,7 +91,7 @@ validation: new ValidationTools()
 
 - `source/panels/default/index.ts` — 面板通过 IPC 动态获取工具列表，无需改动
 - `source/types/index.ts` — 类型定义不涉及具体工具类别
-- `source/scene.ts` — 场景脚本不涉及这些工具
+- `source/cocos-entry.ts` — 场景脚本不涉及这些工具
 - `source/main.ts` — 主进程不直接引用这些工具类（通过 MCPServer 间接使用）
 
 ---

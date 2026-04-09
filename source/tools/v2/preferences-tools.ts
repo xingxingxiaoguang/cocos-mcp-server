@@ -1,5 +1,5 @@
 import { PreferencesScope } from '../../capabilities/preferences/interface';
-import { getCapabilityRegistry } from '../../editor-bridge/runtime/registry';
+import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { BaseToolExecutor, ToolHandler } from '../base-tool';
 import { ToolDefinition, ToolResponse } from '../../mcp/interface';
 import { makeError, ToolErrorCode } from '../../utils/error-codes';

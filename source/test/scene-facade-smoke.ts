@@ -6,7 +6,7 @@ import * as assert from 'assert';
     },
 };
 
-const sceneModule = require('../scene') as { methods?: Record<string, unknown> };
+const sceneModule = require('../cocos-entry') as { methods?: Record<string, unknown> };
 
 function main(): void {
     assert.ok(sceneModule.methods, 'scene facade should export methods');

@@ -293,10 +293,11 @@ cocos-mcp-server/
 │   ├── main.ts
 │   ├── mcp-server.ts
 │   ├── settings.ts
-│   ├── scene.ts
+│   ├── cocos-entry.ts
+│   ├── cocos-runtime/
+│   ├── runtime/
 │   ├── tools/
 │   │   ├── tool-manager.ts
-│   │   ├── prefab-tools.ts
 │   │   └── v2/
 │   │       ├── scene-tools.ts
 │   │       ├── node-tools.ts

@@ -40,7 +40,7 @@
 | 预览入口 | `project_build action=preview` 已保留，但目前仅打开 Build 面板，不是真正的预览控制链路 |
 | 日志工具 | `debug_logs` 已支持 editor console 和 `project.log` 查询 |
 | 浏览器日志桥接设计 | 已有 `doc/feature/tools_optimization/07-browser-preview-log-bridge.md` 可作为前置能力 |
-| 性能统计 | `source/scene.ts` 已有编辑器侧 `getPerformanceStats()`，可作为摘要字段参考 |
+| 性能统计 | `source/cocos-entry.ts` 已有编辑器侧 `getPerformanceStats()`，可作为摘要字段参考 |
 
 ### 1.3 当前关键缺口
 

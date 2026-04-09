@@ -1,4 +1,4 @@
-import { getCapabilityRegistry } from '../../editor-bridge/runtime/registry';
+import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ProjectSettingsCategory } from '../../capabilities/project/interface';
 import { BaseToolExecutor, ToolHandler } from '../base-tool';
 import { ToolDefinition, ToolResponse } from '../../mcp/interface';

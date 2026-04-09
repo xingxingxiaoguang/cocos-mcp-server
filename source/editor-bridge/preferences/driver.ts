@@ -1,4 +1,4 @@
-import { RuntimeProfile } from '../runtime/profile';
+import { RuntimeProfile } from '../../runtime/profile';
 import { PreferencesBridgeDriver, PreferencesQueryConfigRequest, PreferencesSetConfigRequest } from './contract';
 
 const PREFERENCES_CHANNEL = 'preferences';

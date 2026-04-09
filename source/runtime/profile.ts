@@ -6,7 +6,14 @@ export interface RuntimeProfile {
         projectQueryConfig: boolean;
         animationQueryClip: boolean;
         animationPropertyQuery: boolean;
+        sceneQueryNodeTree: boolean;
+        sceneQueryState: boolean;
+        sceneLifecycle: boolean;
+        sceneManage: boolean;
         sceneScriptExecute: boolean;
+        assetQueryAssets: boolean;
+        assetQueryUuid: boolean;
+        assetCreateAsset: boolean;
     };
 }
 
@@ -22,7 +29,14 @@ export function createRuntimeProfile(editor: any = (globalThis as any).Editor): 
             projectQueryConfig: hasRequest,
             animationQueryClip: hasRequest,
             animationPropertyQuery: hasRequest,
+            sceneQueryNodeTree: hasRequest,
+            sceneQueryState: hasRequest,
+            sceneLifecycle: hasRequest,
+            sceneManage: hasRequest,
             sceneScriptExecute: hasRequest,
+            assetQueryAssets: hasRequest,
+            assetQueryUuid: hasRequest,
+            assetCreateAsset: hasRequest,
         },
     };
 }

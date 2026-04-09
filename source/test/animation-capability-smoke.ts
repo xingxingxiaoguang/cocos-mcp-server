@@ -1,6 +1,6 @@
 import * as assert from 'assert';
-import { createCapabilityRegistry } from '../editor-bridge/runtime/registry';
-import { RuntimeProfile } from '../editor-bridge/runtime/profile';
+import { createCapabilityRegistry } from '../runtime/capability-registry';
+import { RuntimeProfile } from '../runtime/profile';
 import { AnimationBridgeDriver } from '../editor-bridge/animation/contract';
 
 class MockAnimationDriver implements AnimationBridgeDriver {
@@ -51,7 +51,14 @@ async function main(): Promise<void> {
             projectQueryConfig: true,
             animationQueryClip: true,
             animationPropertyQuery: true,
+            sceneQueryNodeTree: true,
+            sceneQueryState: true,
+            sceneLifecycle: true,
+            sceneManage: true,
             sceneScriptExecute: true,
+            assetQueryAssets: true,
+            assetQueryUuid: true,
+            assetCreateAsset: true,
         },
     };
 

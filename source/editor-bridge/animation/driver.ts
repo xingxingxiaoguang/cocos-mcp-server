@@ -1,11 +1,11 @@
-import { RuntimeProfile } from '../runtime/profile';
+import { RuntimeProfile } from '../../runtime/profile';
 import {
     AnimationAssetRecord,
     AnimationBridgeDriver,
+    AnimationClipRefRecord,
     AnimationClipResolveInput,
     AnimationSceneMethodResult,
 } from './contract';
-import { ResolvedAnimationClipRef } from '../../capabilities/animation/interface';
 
 const ASSET_DB_CHANNEL = 'asset-db';
 const SCENE_CHANNEL = 'scene';
@@ -30,7 +30,7 @@ class EditorAnimationDriver implements AnimationBridgeDriver {
         }));
     }
 
-    async resolveClipRef(input: AnimationClipResolveInput): Promise<ResolvedAnimationClipRef> {
+    async resolveClipRef(input: AnimationClipResolveInput): Promise<AnimationClipRefRecord> {
         this.ensureRequestAvailable();
         const request = this.getRequest();
         const requestedPath = typeof input.path === 'string' ? input.path.trim() : '';

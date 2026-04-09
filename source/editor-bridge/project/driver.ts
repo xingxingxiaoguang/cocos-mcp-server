@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { RuntimeProfile } from '../runtime/profile';
+import { RuntimeProfile } from '../../runtime/profile';
 import { ProjectBridgeDriver, ProjectConfigCandidate, ProjectRuntimeInfo } from './contract';
 
 const PROJECT_CHANNEL = 'project';

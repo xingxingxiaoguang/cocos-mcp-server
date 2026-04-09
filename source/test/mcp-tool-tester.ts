@@ -202,7 +202,7 @@ export class MCPToolTester {
             
             // 7. 测试预制体工具
             console.log('\n7. 测试预制体列表...');
-            const prefabResult = await this.callTool('prefab_get_prefab_list', {
+            const prefabResult = await this.callTool('prefab_query', {
                 folder: 'db://assets'
             });
             console.log('找到预制体:', prefabResult.data?.length || 0);

@@ -237,7 +237,7 @@ this.tools.animation = new AnimationToolsV2();
 
 除新增 v2 工具文件外，还需要：
 - 在 `package.json` 的 `contributions.scene.methods` 中注册动画相关方法
-- 在 `source/scene.ts` 中实现这些方法
+- 在 `source/cocos-entry.ts` 中实现这些方法
 - 所有动画编辑逻辑统一收口到 `scene.ts`
 
 ### 4.4 建议实现顺序
@@ -300,7 +300,7 @@ for nt in new_tools:
 
 - [ ] `source/tools/v2/animation-tools.ts` 已创建
 - [ ] `package.json` 已注册动画相关 scene methods
-- [ ] `source/scene.ts` 已实现动画相关 scene methods
+- [ ] `source/cocos-entry.ts` 已实现动画相关 scene methods
 - [ ] `animation_clip` 的 `list` / `create` / `get_info` 可用
 - [ ] `animation_clip` 的 `list_editable_properties` / `add_track` / `remove_track` 可用
 - [ ] `animation_clip` 的 `create_key` / `set_keyframe` / `remove_key` / `query_value_at_frame` 可用

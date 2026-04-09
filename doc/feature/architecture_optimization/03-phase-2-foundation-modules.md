@@ -52,7 +52,7 @@ source/tools/base-tool.ts
 
 ```text
 source/types/index.ts
-source/scene.ts
+source/cocos-entry.ts
 source/tools/v2/component-tools.ts
 source/tools/v2/scene-script-tools.ts
 source/tools/v2/prefab-tools.ts

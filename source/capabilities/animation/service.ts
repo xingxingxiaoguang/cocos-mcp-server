@@ -2,6 +2,7 @@ import { safeSerialize } from '../../utils/serializer';
 import { JsonValue } from '../../json';
 import {
     AnimationBridgeDriver,
+    AnimationClipRefRecord,
     AnimationSceneMethodResult,
 } from '../../editor-bridge/animation/contract';
 import {
@@ -138,11 +139,13 @@ export class AnimationService implements AnimationCapability {
             throw new Error('Provide clipUuid, uuid, or path to identify the animation clip');
         }
 
-        return this.driver.resolveClipRef({
+        const resolved = await this.driver.resolveClipRef({
             clipUuid: input.clipUuid,
             uuid: input.uuid,
             path: input.path,
         });
+
+        return this.mapResolvedClip(resolved);
     }
 
     private async executeSceneMethod(method: string, args: unknown[]): Promise<AnimationOperationResult> {
@@ -159,6 +162,15 @@ export class AnimationService implements AnimationCapability {
             data: safeSerialize(result.data) as JsonValue,
             ...(typeof result.warning === 'string' ? { warning: result.warning } : {}),
             ...(typeof result.message === 'string' ? { message: result.message } : {}),
+        };
+    }
+
+    private mapResolvedClip(record: AnimationClipRefRecord): ResolvedAnimationClipRef {
+        return {
+            clipUuid: record.clipUuid,
+            path: record.path,
+            name: record.name,
+            type: record.type,
         };
     }
 }

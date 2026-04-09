@@ -1,10 +1,20 @@
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
-import { PrefabInfo } from '../prefab/interface';
-import { PrefabTools } from '../prefab-tools';
+import { getCapabilityRegistry } from '../../runtime/capability-registry';
+import { ToolDefinition, ToolResponse } from '../../mcp/interface';
+import { makeError, ToolErrorCode } from '../../utils/error-codes';
+import { BaseToolExecutor, ToolHandler } from '../base-tool';
 import { actionEnum, dbPath as dbPathSchema, uuid as uuidSchema } from '../schemas/common';
 
-export class PrefabToolsV2 implements ToolExecutor {
-    private legacyPrefabTools = new PrefabTools();
+type PrefabCreateAction = 'from_node' | 'instantiate' | 'duplicate';
+type PrefabUpdateAction = 'apply' | 'revert';
+
+export class PrefabToolsV2 extends BaseToolExecutor {
+    private readonly prefab = getCapabilityRegistry().prefab;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        create: async (args: any) => this.handleCreate(args),
+        update: async (args: any) => this.handleUpdate(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -16,15 +26,15 @@ export class PrefabToolsV2 implements ToolExecutor {
                     properties: {
                         prefabPath: {
                             ...dbPathSchema,
-                            description: 'Prefab path, e.g. db://assets/prefabs/Player.prefab'
+                            description: 'Prefab path, e.g. db://assets/prefabs/Player.prefab',
                         },
                         folder: {
                             ...dbPathSchema,
                             description: 'Restrict search to this folder (only when listing)',
-                            default: 'db://assets'
-                        }
-                    }
-                }
+                            default: 'db://assets',
+                        },
+                    },
+                },
             },
             {
                 name: 'create',
@@ -33,33 +43,31 @@ export class PrefabToolsV2 implements ToolExecutor {
                     type: 'object',
                     properties: {
                         action: {
-                            ...actionEnum(['from_node', 'instantiate', 'duplicate'], 'Operation type')
+                            ...actionEnum(['from_node', 'instantiate', 'duplicate'], 'Operation type'),
                         },
-                        // from_node params
                         uuid: {
                             ...uuidSchema,
-                            description: 'Source node UUID (action=from_node)'
+                            description: 'Source node UUID (action=from_node)',
                         },
                         savePath: {
                             ...dbPathSchema,
-                            description: 'Save path for new prefab (action=from_node), e.g. db://assets/prefabs/MyPrefab.prefab'
+                            description: 'Save path for new prefab (action=from_node), e.g. db://assets/prefabs/MyPrefab.prefab',
                         },
                         prefabName: {
                             type: 'string',
-                            description: 'Prefab name (action=from_node)'
+                            description: 'Prefab name (action=from_node)',
                         },
-                        // instantiate params
                         prefabPath: {
                             ...dbPathSchema,
-                            description: 'Prefab path (action=instantiate)'
+                            description: 'Prefab path (action=instantiate)',
                         },
                         parentUuid: {
                             ...uuidSchema,
-                            description: 'Parent node UUID (action=instantiate)'
+                            description: 'Parent node UUID (action=instantiate)',
                         },
                         name: {
                             type: 'string',
-                            description: 'Custom node name for the instantiated prefab (action=instantiate). If omitted, the prefab asset name is used.'
+                            description: 'Custom node name for the instantiated prefab (action=instantiate). If omitted, the prefab asset name is used.',
                         },
                         position: {
                             type: 'object',
@@ -67,21 +75,20 @@ export class PrefabToolsV2 implements ToolExecutor {
                             properties: {
                                 x: { type: 'number' },
                                 y: { type: 'number' },
-                                z: { type: 'number' }
-                            }
+                                z: { type: 'number' },
+                            },
                         },
-                        // duplicate params
                         sourcePath: {
                             ...dbPathSchema,
-                            description: 'Source prefab path (action=duplicate)'
+                            description: 'Source prefab path (action=duplicate)',
                         },
                         targetPath: {
                             ...dbPathSchema,
-                            description: 'Target path (action=duplicate)'
-                        }
+                            description: 'Target path (action=duplicate)',
+                        },
                     },
-                    required: ['action']
-                }
+                    required: ['action'],
+                },
             },
             {
                 name: 'update',
@@ -93,347 +100,186 @@ export class PrefabToolsV2 implements ToolExecutor {
                             ...actionEnum(
                                 ['apply', 'revert'],
                                 'apply=save changes to prefab asset, revert=restore instance to original state',
-                            )
+                            ),
                         },
                         uuid: {
                             ...uuidSchema,
-                            description: 'Prefab instance node UUID'
+                            description: 'Prefab instance node UUID',
                         },
                         assetUuid: {
                             ...uuidSchema,
-                            description: 'Prefab asset UUID (optional, for revert with restore-prefab API)'
-                        }
+                            description: 'Prefab asset UUID (optional, for revert with restore-prefab API)',
+                        },
                     },
-                    required: ['action', 'uuid']
-                }
-            }
+                    required: ['action', 'uuid'],
+                },
+            },
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'query':
-                return await this.handleQuery(args);
-            case 'create':
-                return await this.handleCreate(args);
-            case 'update':
-                return await this.handleUpdate(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
-    }
-
-    // ============================================================
-    // Query handler
-    // ============================================================
-
     private async handleQuery(args: any): Promise<ToolResponse> {
-        const { prefabPath, folder } = args;
-
+        const prefabPath = this.optionalTrimmedString(args?.prefabPath);
         if (prefabPath) {
-            // Get detailed prefab info (combined from getPrefabInfo + validatePrefab + loadPrefab)
-            return await this.getPrefabDetails(prefabPath);
+            const result = await this.prefab.query({ prefabPath });
+            return {
+                success: true,
+                data: result,
+            };
         }
-        // List all prefabs
-        return await this.getPrefabList(folder || 'db://assets');
-    }
 
-    private async getPrefabList(folder: string = 'db://assets'): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const pattern = folder.endsWith('/') ?
-                `${folder}**/*.prefab` : `${folder}/**/*.prefab`;
-
-            Editor.Message.request('asset-db', 'query-assets', {
-                pattern: pattern
-            }).then((results: any[]) => {
-                const prefabs: PrefabInfo[] = results.map(asset => ({
-                    name: asset.name,
-                    path: asset.url,
-                    uuid: asset.uuid,
-                    folder: asset.url.substring(0, asset.url.lastIndexOf('/'))
-                }));
-                resolve({ success: true, data: prefabs });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
+        const result = await this.prefab.list({
+            folder: this.optionalTrimmedString(args?.folder),
         });
+        return {
+            success: true,
+            data: result.prefabs,
+        };
     }
-
-    private async getPrefabDetails(prefabPath: string): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
-            try {
-                // Get asset info
-                const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', prefabPath);
-                if (!assetInfo) {
-                    resolve({ success: false, error: 'Prefab not found' });
-                    return;
-                }
-
-                // Get metadata
-                let metaInfo: any = null;
-                try {
-                    metaInfo = await Editor.Message.request('asset-db', 'query-asset-meta', assetInfo.uuid);
-                } catch {
-                    // metadata optional
-                }
-
-                // Validate format
-                let validation: any = null;
-                try {
-                    const content = await Editor.Message.request('asset-db', 'read-asset', prefabPath);
-                    const prefabData = JSON.parse(content);
-                    validation = this.validatePrefabFormat(prefabData);
-                } catch {
-                    // validation optional
-                }
-
-                const info: any = {
-                    name: assetInfo.name || (metaInfo && metaInfo.name),
-                    uuid: assetInfo.uuid,
-                    path: prefabPath,
-                    folder: prefabPath.substring(0, prefabPath.lastIndexOf('/')),
-                };
-
-                if (metaInfo) {
-                    info.createTime = metaInfo.createTime;
-                    info.modifyTime = metaInfo.modifyTime;
-                    info.dependencies = metaInfo.depends || [];
-                }
-
-                if (validation) {
-                    info.validation = {
-                        isValid: validation.isValid,
-                        issues: validation.issues,
-                        nodeCount: validation.nodeCount,
-                        componentCount: validation.componentCount
-                    };
-                }
-
-                resolve({ success: true, data: info });
-            } catch (err: any) {
-                resolve({ success: false, error: err.message });
-            }
-        });
-    }
-
-    private validatePrefabFormat(prefabData: any): { isValid: boolean; issues: string[]; nodeCount: number; componentCount: number } {
-        const issues: string[] = [];
-        let nodeCount = 0;
-        let componentCount = 0;
-
-        if (!Array.isArray(prefabData)) {
-            issues.push('Prefab data must be an array');
-            return { isValid: false, issues, nodeCount, componentCount };
-        }
-        if (prefabData.length === 0) {
-            issues.push('Prefab data is empty');
-            return { isValid: false, issues, nodeCount, componentCount };
-        }
-
-        const firstElement = prefabData[0];
-        if (!firstElement || firstElement.__type__ !== 'cc.Prefab') {
-            issues.push('First element must be cc.Prefab type');
-        }
-
-        prefabData.forEach((item: any) => {
-            if (item.__type__ === 'cc.Node') nodeCount++;
-            else if (item.__type__ && item.__type__.includes('cc.')) componentCount++;
-        });
-
-        if (nodeCount === 0) {
-            issues.push('Prefab must contain at least one node');
-        }
-
-        return { isValid: issues.length === 0, issues, nodeCount, componentCount };
-    }
-
-    // ============================================================
-    // Create handler
-    // ============================================================
 
     private async handleCreate(args: any): Promise<ToolResponse> {
-        const { action } = args;
+        const action = args?.action as PrefabCreateAction | undefined;
 
         switch (action) {
             case 'from_node':
-                return await this.createPrefabFromNode(args);
+                return await this.createFromNode(args);
             case 'instantiate':
                 return await this.instantiatePrefab(args);
             case 'duplicate':
                 return await this.duplicatePrefab(args);
             default:
-                return { success: false, error: `Unknown action: ${action}. Must be one of: from_node, instantiate, duplicate` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown action: ${String(action)}`);
         }
     }
 
-    private async createPrefabFromNode(args: any): Promise<ToolResponse> {
-        const nodeUuid = args.uuid;
-        const savePath = args.savePath;
-        const prefabName = args.prefabName || 'NewPrefab';
-
-        if (!nodeUuid) {
-            return { success: false, error: 'Missing uuid: source node UUID is required for action=from_node' };
-        }
-        if (!savePath) {
-            return { success: false, error: 'Missing savePath: save path is required for action=from_node' };
+    private async createFromNode(args: any): Promise<ToolResponse> {
+        const nodeUuid = this.requireTrimmedString(args?.uuid, 'uuid');
+        if (!nodeUuid.success) {
+            return nodeUuid.response;
         }
 
-        // Delegate to legacy PrefabTools which has the complex multi-strategy creation logic
-        return await this.legacyPrefabTools.execute('create_prefab', {
-            nodeUuid,
-            savePath,
-            prefabName
+        const savePath = this.requireTrimmedString(args?.savePath, 'savePath');
+        if (!savePath.success) {
+            return savePath.response;
+        }
+
+        const result = await this.prefab.createFromNode({
+            nodeUuid: nodeUuid.value,
+            savePath: savePath.value,
+            prefabName: this.optionalTrimmedString(args?.prefabName),
         });
+
+        return this.toToolResponse(result);
     }
 
     private async instantiatePrefab(args: any): Promise<ToolResponse> {
-        const { prefabPath, parentUuid, position } = args;
-
-        if (!prefabPath) {
-            return { success: false, error: 'Missing prefabPath: prefab path is required for action=instantiate' };
+        const prefabPath = this.requireTrimmedString(args?.prefabPath, 'prefabPath');
+        if (!prefabPath.success) {
+            return prefabPath.response;
         }
 
-        return new Promise(async (resolve) => {
-            try {
-                const assetInfo = await Editor.Message.request('asset-db', 'query-asset-info', prefabPath);
-                if (!assetInfo) {
-                    resolve({ success: false, error: 'Prefab not found' });
-                    return;
-                }
-
-                const createNodeOptions: any = {
-                    assetUuid: assetInfo.uuid
-                };
-
-                if (parentUuid) {
-                    createNodeOptions.parent = parentUuid;
-                }
-                if (typeof args.name === 'string' && args.name.trim()) {
-                    createNodeOptions.name = args.name.trim();
-                } else if (assetInfo.name) {
-                    createNodeOptions.name = assetInfo.name;
-                }
-                if (position) {
-                    createNodeOptions.dump = {
-                        position: { value: position }
-                    };
-                }
-
-                const nodeUuid = await Editor.Message.request('scene', 'create-node', createNodeOptions);
-                const uuid = Array.isArray(nodeUuid) ? nodeUuid[0] : nodeUuid;
-
-                resolve({
-                    success: true,
-                    data: {
-                        nodeUuid: uuid,
-                        prefabPath,
-                        parentUuid,
-                        position,
-                        message: 'Prefab instantiated successfully'
-                    }
-                });
-            } catch (err: any) {
-                resolve({
-                    success: false,
-                    error: `Prefab instantiation failed: ${err.message}`,
-                    instruction: 'Please check that the prefab path is correct and the prefab file format is valid'
-                });
-            }
+        const result = await this.prefab.instantiate({
+            prefabPath: prefabPath.value,
+            parentUuid: this.optionalTrimmedString(args?.parentUuid),
+            name: this.optionalTrimmedString(args?.name),
+            position: this.normalizePosition(args?.position),
         });
+
+        return this.toToolResponse(result);
     }
 
     private async duplicatePrefab(args: any): Promise<ToolResponse> {
-        const sourcePath = args.sourcePath;
-        const targetPath = args.targetPath;
-
-        if (!sourcePath) {
-            return { success: false, error: 'Missing sourcePath: source prefab path is required for action=duplicate' };
-        }
-        if (!targetPath) {
-            return { success: false, error: 'Missing targetPath: target path is required for action=duplicate' };
+        const sourcePath = this.requireTrimmedString(args?.sourcePath, 'sourcePath');
+        if (!sourcePath.success) {
+            return sourcePath.response;
         }
 
-        // Delegate to legacy PrefabTools
-        return await this.legacyPrefabTools.execute('duplicate_prefab', {
-            sourcePrefabPath: sourcePath,
-            targetPrefabPath: targetPath,
-            newPrefabName: args.prefabName
+        const targetPath = this.requireTrimmedString(args?.targetPath, 'targetPath');
+        if (!targetPath.success) {
+            return targetPath.response;
+        }
+
+        const result = await this.prefab.duplicate({
+            sourcePath: sourcePath.value,
+            targetPath: targetPath.value,
+            prefabName: this.optionalTrimmedString(args?.prefabName),
         });
+
+        return this.toToolResponse(result);
     }
 
-    // ============================================================
-    // Update handler
-    // ============================================================
-
     private async handleUpdate(args: any): Promise<ToolResponse> {
-        const { action, uuid, assetUuid } = args;
+        const action = args?.action as PrefabUpdateAction | undefined;
+        const nodeUuid = this.requireTrimmedString(args?.uuid, 'uuid');
+        if (!nodeUuid.success) {
+            return nodeUuid.response;
+        }
 
         switch (action) {
             case 'apply':
-                return await this.applyPrefab(uuid);
+                return this.toToolResponse(await this.prefab.apply({
+                    nodeUuid: nodeUuid.value,
+                }));
             case 'revert':
-                return await this.revertPrefab(uuid, assetUuid);
+                return this.toToolResponse(await this.prefab.revert({
+                    nodeUuid: nodeUuid.value,
+                    assetUuid: this.optionalTrimmedString(args?.assetUuid),
+                }));
             default:
-                return { success: false, error: `Unknown action: ${action}. Must be one of: apply, revert` };
+                return makeError(ToolErrorCode.INVALID_ARGS, `Unknown action: ${String(action)}`);
         }
     }
 
-    private async applyPrefab(nodeUuid: string): Promise<ToolResponse> {
-        return new Promise(async (resolve) => {
-            try {
-                // Get the node's prefab info to find the prefab asset UUID
-                const nodeData = await Editor.Message.request('scene', 'query-node', nodeUuid);
-                if (!nodeData) {
-                    resolve({ success: false, error: 'Node not found' });
-                    return;
-                }
-
-                // Try apply-prefab with node UUID directly
-                await Editor.Message.request('scene', 'apply-prefab', {
-                    node: nodeUuid
-                });
-
-                resolve({
-                    success: true,
-                    message: 'Prefab updated successfully',
-                    data: { nodeUuid }
-                });
-            } catch (err: any) {
-                resolve({ success: false, error: `Failed to apply prefab: ${err.message}` });
-            }
-        });
+    private toToolResponse(result: { data: unknown; message?: string; warning?: string; instruction?: string }): ToolResponse {
+        return {
+            success: true,
+            data: result.data,
+            ...(result.message ? { message: result.message } : {}),
+            ...(result.warning ? { warning: result.warning } : {}),
+            ...(result.instruction ? { instruction: result.instruction } : {}),
+        };
     }
 
-    private async revertPrefab(nodeUuid: string, assetUuid?: string): Promise<ToolResponse> {
-        // Try multiple revert strategies, from most to least specific
-
-        // Strategy 1: If assetUuid provided, use restore-prefab API (from SceneAdvancedTools.restorePrefab + PrefabTools.restorePrefabNode)
-        if (assetUuid) {
-            try {
-                await (Editor.Message.request as any)('scene', 'restore-prefab', nodeUuid, assetUuid);
-                return {
-                    success: true,
-                    message: 'Prefab restored successfully',
-                    data: { nodeUuid, assetUuid }
-                };
-            } catch (err: any) {
-                console.warn(`[PrefabToolsV2] restore-prefab failed, trying revert-prefab:`, err.message);
-            }
+    private optionalTrimmedString(value: unknown): string | undefined {
+        if (typeof value !== 'string') {
+            return undefined;
         }
 
-        // Strategy 2: Use revert-prefab API (from PrefabTools.revertPrefab)
-        return new Promise((resolve) => {
-            Editor.Message.request('scene', 'revert-prefab', {
-                node: nodeUuid
-            }).then(() => {
-                resolve({
-                    success: true,
-                    message: 'Prefab instance reverted successfully',
-                    data: { nodeUuid }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: `Failed to revert prefab: ${err.message}` });
-            });
-        });
+        const trimmed = value.trim();
+        return trimmed ? trimmed : undefined;
+    }
+
+    private requireTrimmedString(
+        value: unknown,
+        fieldName: string,
+    ): { success: true; value: string } | { success: false; response: ToolResponse } {
+        const normalized = this.optionalTrimmedString(value);
+        if (!normalized) {
+            return {
+                success: false,
+                response: makeError(ToolErrorCode.MISSING_REQUIRED, `${fieldName} is required`),
+            };
+        }
+
+        return {
+            success: true,
+            value: normalized,
+        };
+    }
+
+    private normalizePosition(value: unknown): { x: number; y: number; z?: number } | undefined {
+        if (!value || typeof value !== 'object') {
+            return undefined;
+        }
+
+        const position = value as Record<string, unknown>;
+        if (typeof position.x !== 'number' || typeof position.y !== 'number') {
+            return undefined;
+        }
+
+        return {
+            x: position.x,
+            y: position.y,
+            ...(typeof position.z === 'number' ? { z: position.z } : {}),
+        };
     }
 }

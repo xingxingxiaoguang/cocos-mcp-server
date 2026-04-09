@@ -3,7 +3,7 @@
 > 来源：`doc/plan/architecture-optimization-plan.md` v1.2  
 > 若与旧 `plan` 文档冲突，以当前 `doc/feature/architecture_optimization/` 实施文档为准  
 > 目标：把总体架构规划拆成可顺序执行、可验收、可回滚的实施方案  
-> 适用范围：`source/main.ts`、`source/mcp-server.ts`、`source/tools/`、`source/panels/`、`source/scene.ts` 及新增基础设施目录
+> 适用范围：`source/main.ts`、`source/mcp-server.ts`、`source/tools/`、`source/panels/`、`source/cocos-entry.ts` 及新增基础设施目录
 
 > 状态同步（2026-04-09）：
 > 当前仓库已正式删除 `source/types/`。
@@ -59,7 +59,7 @@ Step 5 Panel / 日志 / 规范收尾
 - Step 2 完成前，不启动大规模工具类迁移，只能做最小接线验证。
 - Step 3 完成前，禁止继续新增散落的 `Editor.Message.request('scene' | 'asset-db' | ...)`，并禁止把版本差异逻辑继续写回 tools。
 - 自 Step 3 起，类型归属重构必须与领域迁移同步推进：新增 capability/driver/shared 类型不得重新落入全局类型垃圾桶，重型领域迁移时必须同步剪除对应的历史全局类型依赖。
-- Step 4 完成前，不删除 `source/scene.ts` facade。
+- Step 4 完成前，不删除 `source/cocos-entry.ts` facade。
 - Step 4 期间，重型工具必须通过 `capability / contract / driver` 迁移，不接受只有 message wrapper 的“伪迁移”。
 
 ---

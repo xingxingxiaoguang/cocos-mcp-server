@@ -1,8 +1,8 @@
-# Step 3: 三层 Capability 架构建设与 `scene.ts` 拆分
+# Step 3: 三层 Capability 架构建设与 `cocos-entry.ts` 拆分
 
 > 前置依赖：Step 2  
 > 预计改动量：大  
-> 目标：建立 `tools -> capabilities -> contract/driver` 的稳定三层架构，并完成 `scene.ts` 的职责拆分与 facade 保留
+> 目标：建立 `tools -> capabilities -> contract/driver` 的稳定三层架构，并完成 `cocos-entry.ts` 的职责拆分与 facade 保留
 
 ---
 
@@ -17,7 +17,7 @@
   - `source/utils/error-codes.ts`
   - `source/tools/base-tool.ts`
   - Step 2 的过渡性 `source/types/` 已在后续迁移中退役；当前以显式归属目录为准
-- `source/scene.ts` 仍是 Cocos scene 脚本入口，执行本 Step 时必须保留 facade 形态，不允许删除
+- `source/cocos-entry.ts` 仍是 Cocos scene 脚本入口，执行本 Step 时必须保留 facade 形态，不允许删除
 - 仓库中如果已经存在“半成品 bridge / adapter / message wrapper”，应优先重组归位，而不是继续在旧结构上叠加一层
 
 ### 0.1 本 Step 的输入
@@ -25,10 +25,10 @@
 执行时默认从以下现状出发：
 
 - `tools/v2/` 中仍有工具直接感知底层 Editor API 或散落的适配逻辑
-- `scene.ts` 相关逻辑已经部分拆分或准备拆分，但边界未完全收紧
+- `cocos-entry.ts` 相关逻辑已经部分拆分或准备拆分，但边界未完全收紧
 - 仓库可能已经存在：
   - `source/editor-bridge/`
-  - `source/scene/`
+  - `source/cocos-runtime/`
   - 少量低风险工具试点迁移
 
 如果这些目录已经存在，目标不是回退重做，而是重构成本文定义的最终分层：
@@ -44,14 +44,14 @@
 
 - `tools` 不再关心底层 message 名、版本差异、fallback
 - 至少 `preferences/project/animation` 三个低风险领域完成“tool -> capability -> contract -> driver”贯通
-- `source/scene.ts` 已稳定为 facade
-- `scene/` 拆分后的职责边界清晰，可被 driver 复用，但不反向暴露给 tool
+- `source/cocos-entry.ts` 已稳定为 facade
+- `cocos-runtime/` 拆分后的职责边界清晰，可被 driver 复用，但不反向暴露给 tool
 
 ### 0.3 执行纪律
 
 - 不接受只有 `Editor.Message.request(...)` 包装的“伪抽象”
 - 不允许把复杂业务编排塞进 `driver`
-- 不允许为了迁移方便，让 `tools` 直接调用 `runtime/registry.ts` 之外的底层实现细节
+- 不允许为了迁移方便，让 `tools` 直接调用 `runtime/capability-registry.ts` 之外的底层实现细节
 - 当前项目默认不单独引入 `use-case` 层；只有在出现明确、稳定、可复用的跨 capability 编排时，才重新评估是否需要新增该层
 - 当前迁移基线只支持 Cocos Creator `3.8.x`，不为未来版本预建多套 driver、目录层级或抽象包装
 - `builder` 相关能力与 `open-tool-manager` / 遗留面板入口不纳入本 Step 的试点与验收范围
@@ -68,7 +68,7 @@
 
 - 工具文件里直接写 `Editor.Message.request('scene' | 'asset-db' | 'preferences' | ...)`
 - 参数编排、返回值适配、fallback、版本兼容逻辑散落在工具内
-- `scene.ts` 同时承载 scene 注册入口、节点查询、序列化、动画上下文和 Editor/Engine fallback
+- `cocos-entry.ts` 同时承载 scene 注册入口、节点查询、序列化、动画上下文和 Editor/Engine fallback
 - 如果只做 message wrapper，只能解决“字符串集中”，不能解决 tools 继续膨胀
 
 因此本 Step 的核心不是“把 request 换个位置”，而是建立能力分层边界：
@@ -98,13 +98,13 @@ tools
                │
 ┌──────────────▼──────────────────────────────────────────┐
 │             Editor Bridge / Contract / Driver 层         │
-│  runtime/profile.ts  / runtime/registry.ts               │
+│  runtime/profile.ts  / runtime/capability-registry.ts    │
 │  <domain>/contract.ts ─ bridge 契约                      │
 │  <domain>/driver.ts   ─ Editor 对接 / fallback / 分支    │
 └──────────────┬──────────────────────────────────────────┘
                │
 ┌──────────────▼──────────────────────────────────────────┐
-│                    场景进程层（scene/）                   │
+│                场景进程层（cocos-runtime/）               │
 │  animation/  node/  component/                           │
 │  按领域聚合 scene methods 与运行时辅助                    │
 └─────────────────────────────────────────────────────────┘
@@ -151,13 +151,13 @@ source/editor-bridge/animation/
 ### 2.2 继续保留并完成拆分的文件
 
 ```text
-source/scene/animation/methods.ts
-source/scene/animation/runtime.ts
-source/scene/animation/fallback.ts
-source/scene/node/methods.ts
-source/scene/node/registry.ts
-source/scene/component/methods.ts
-source/scene.ts
+source/cocos-runtime/animation/methods.ts
+source/cocos-runtime/animation/runtime.ts
+source/cocos-runtime/animation/fallback.ts
+source/cocos-runtime/node/methods.ts
+source/cocos-runtime/node/registry.ts
+source/cocos-runtime/component/methods.ts
+source/cocos-entry.ts
 ```
 
 ### 2.3 本 Step 试点迁移范围
@@ -305,7 +305,7 @@ source/capabilities/<domain>/
 
 ### 4.1 Runtime Profile
 
-新增 `editor-bridge/runtime/profile.ts`，用于识别当前 Cocos 版本和能力开关：
+新增 `runtime/profile.ts`，用于识别当前 Cocos 版本和能力开关：
 
 ```typescript
 interface RuntimeProfile {
@@ -326,7 +326,7 @@ interface RuntimeProfile {
 
 ### 4.2 Capability Registry
 
-新增 `editor-bridge/runtime/registry.ts`，按 profile 选择 driver 并暴露 capability service：
+新增 `runtime/capability-registry.ts`，按 profile 选择 driver 并暴露 capability service：
 
 ```typescript
 const registry = createCapabilityRegistry(profile);
@@ -346,7 +346,7 @@ registry.animation.getClipInfo(...)
 
 ### 5.1 保留 facade
 
-`source/scene.ts` 不删除，继续作为 Cocos scene 脚本稳定入口：
+`source/cocos-entry.ts` 不删除，继续作为 Cocos scene 脚本稳定入口：
 
 ```typescript
 export const methods = {
@@ -362,11 +362,11 @@ export const methods = {
 
 - `scene.ts`
   - Cocos scene script 唯一入口，直接聚合各领域 methods
-- `scene/animation/`
+- `cocos-runtime/animation/`
   - 动画领域 scene methods、运行时辅助与 fallback
-- `scene/node/`
+- `cocos-runtime/node/`
   - 节点领域 scene methods 与节点查找能力
-- `scene/component/`
+- `cocos-runtime/component/`
   - 组件领域 scene methods
 
 ### 5.3 拆分原则
@@ -443,7 +443,7 @@ export const methods = {
 
 新会话里建议按以下检查顺序开始，而不是直接写代码：
 
-1. 先确认 `source/scene.ts` 是否仍为 facade。
+1. 先确认 `source/cocos-entry.ts` 是否仍为 facade。
 2. 盘点 `source/editor-bridge/` 当前已有文件，优先把历史遗留的全局桥接文件收敛到按领域的 `contract.ts + driver.ts`。
 3. 盘点 `preferences/project/animation` 三个领域中：
    - tool 里还残留多少底层对接逻辑
@@ -476,7 +476,7 @@ npm run build
 
 重点验证：
 
-- `source/scene.ts` facade 仍可正常加载
+- `source/cocos-entry.ts` facade 仍可正常加载
 - `package.json` 中 scene methods 正常执行
 - `scene/` 拆分后无 module not found 或导出缺失
 
@@ -491,9 +491,9 @@ npm run build
 ### 完成标记
 
 - [ ] 已建立 `tools -> capabilities -> contract/driver` 分层骨架
-- [ ] 已新增 `editor-bridge/runtime/profile.ts` 与 `editor-bridge/runtime/registry.ts`
+- [ ] 已新增 `runtime/profile.ts` 与 `runtime/capability-registry.ts`
 - [ ] 已建立新的类型归属目录，并将本 Step 新增类型归位到协议层、领域层或基础类型层
-- [ ] 已完成 `scene/` 拆分并保留 `source/scene.ts` facade
+- [ ] 已完成 `cocos-runtime/` 拆分并保留 `source/cocos-entry.ts` facade
 - [ ] 至少 3 个低风险工具已改为调用 capability
 - [ ] tools 层已不再关注底层版本差异和 Editor 魔法字符串
 

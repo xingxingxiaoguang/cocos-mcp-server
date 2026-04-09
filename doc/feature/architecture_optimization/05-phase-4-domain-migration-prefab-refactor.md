@@ -16,7 +16,7 @@
 - `editor-bridge/runtime/`
 - `editor-bridge/<domain>/contract.ts`
 - `editor-bridge/<domain>/driver.ts`
-- `source/scene.ts` facade 与 `source/scene/` 拆分结构
+- `source/cocos-entry.ts` facade 与 `source/cocos-runtime/` 拆分结构
 
 如果 Step 3 只完成了部分骨架，必须先补齐最小骨架后，再进入本 Step。不要在没有 capability 边界的前提下直接迁重型工具。
 

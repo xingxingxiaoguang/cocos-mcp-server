@@ -20,7 +20,7 @@
 
 | 文件 | 行数 | 主要职责 |
 |------|------|----------|
-| `source/scene.ts` | 1469 | 场景侧逻辑（序列化、节点查找、动画操作）|
+| `source/cocos-entry.ts` | 1469 | 场景脚本入口 facade（运行时逻辑已迁往 `source/cocos-runtime/`）|
 | `source/mcp-server.ts` | 457 | HTTP 服务 + MCP 协议处理 |
 | `source/tools/v2/component-tools.ts` | 2132 | 组件工具（最大单文件）|
 | `source/tools/v2/node-tools.ts` | 1541 | 节点工具 |
@@ -168,7 +168,7 @@ return new Promise((resolve) => {
                │
 ┌──────────────▼──────────────────────────────────────────┐
 │            Editor Bridge / Contract / Driver 层          │
-│  runtime/profile.ts  / runtime/registry.ts               │
+│  runtime/profile.ts  / runtime/capability-registry.ts    │
 │  <domain>/contract.ts ─ bridge 契约                      │
 │  <domain>/driver.ts   ─ 版本差异 / fallback / Editor 对接 │
 └──────────────┬──────────────────────────────────────────┘
@@ -422,7 +422,7 @@ driver 内部再去决定：
 
 #### Runtime Profile
 
-新增 `editor-bridge/runtime/profile.ts` 探测当前版本和能力开关，并由 `editor-bridge/runtime/registry.ts` 选择 driver。
+新增 `runtime/profile.ts` 探测当前版本和能力开关，并由 `runtime/capability-registry.ts` 选择 driver。
 
 ---
 
@@ -542,23 +542,31 @@ export abstract class BaseToolExecutor implements ToolExecutor {
 
 **关键调整：**
 
-- 保留一个很薄的 `source/scene.ts` 作为 Cocos 注册入口 facade
-- 将实现迁移到 `source/scene/` 目录
-- 不在第一步就强制把 `package.json` 入口改到 `scene/index.ts`
+- 保留一个很薄的 `source/cocos-entry.ts` 作为 Cocos 注册入口 facade
+- 将实现迁移到 `source/cocos-runtime/` 目录
+- 不在第一步就强制把 `package.json` 入口改到 `cocos-runtime/index.ts`
 
 **拆分建议：**
 
-- `source/scene/animation/methods.ts`
-- `source/scene/animation/runtime.ts`
-- `source/scene/animation/fallback.ts`
-- `source/scene/node/methods.ts`
-- `source/scene/node/registry.ts`
-- `source/scene/component/methods.ts`
+- `source/cocos-runtime/animation/methods.ts`
+- `source/cocos-runtime/animation/runtime.ts`
+- `source/cocos-runtime/animation/fallback.ts`
+- `source/cocos-runtime/node/methods.ts`
+- `source/cocos-runtime/node/registry.ts`
+- `source/cocos-runtime/component/methods.ts`
 
-`source/scene.ts` 只做：
+`source/cocos-entry.ts` 只做：
 
 ```typescript
-export { methods } from './scene/methods';
+import { animationMethods } from './cocos-runtime/animation/methods';
+import { componentMethods } from './cocos-runtime/component/methods';
+import { nodeMethods } from './cocos-runtime/node/methods';
+
+export const methods = {
+  ...nodeMethods,
+  ...componentMethods,
+  ...animationMethods,
+};
 ```
 
 ---
@@ -704,8 +712,8 @@ export { methods } from './scene/methods';
 | 任务 | 说明 |
 |------|------|
 | 创建 `capabilities/<domain>/interface.ts + service.ts` | 按领域组织稳定能力接口、模型与服务 |
-| 创建 `editor-bridge/runtime/profile.ts` | 版本能力探测 |
-| 创建 `editor-bridge/runtime/registry.ts` | capability 与 driver 装配 |
+| 创建 `runtime/profile.ts` | 版本能力探测 |
+| 创建 `runtime/capability-registry.ts` | capability 与 driver 装配 |
 | 创建 `editor-bridge/<domain>/contract.ts + driver.ts` | 按领域桥接与版本对接分层 |
 | 创建 `scene/` 目录结构并保留 facade | 降低 Cocos 接入风险 |
 | 迁移 `preferences/project/animation` 试点 | 验证分层模板 |
@@ -779,7 +787,7 @@ export { methods } from './scene/methods';
 7. **复用公共 schema**：用 `CommonSchemas` 中的片段组合 inputSchema
 8. **使用统一错误码**：返回 `makeError(ToolErrorCode.XXX, message)` 而非裸对象
 9. **注册工具**：只在 `source/services/tool-registry.ts` 中注册一次
-10. **场景侧逻辑**：新增到 `source/scene/` 对应模块，而非继续堆进 `scene.ts`
+10. **场景侧逻辑**：新增到 `source/cocos-runtime/` 对应模块，而非继续堆进 `cocos-entry.ts`
 11. **补最小验证**：至少补一条 registry / contract / smoke test 或手测记录
 
 ---

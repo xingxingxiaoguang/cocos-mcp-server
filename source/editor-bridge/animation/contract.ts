@@ -1,5 +1,3 @@
-import { ResolvedAnimationClipRef } from '../../capabilities/animation/interface';
-
 export interface AnimationAssetRecord {
     uuid: string;
     path: string;
@@ -22,8 +20,15 @@ export interface AnimationSceneMethodResult {
     error?: string;
 }
 
+export interface AnimationClipRefRecord {
+    clipUuid: string;
+    path: string;
+    name: string;
+    type?: string;
+}
+
 export interface AnimationBridgeDriver {
     listClipAssets(): Promise<AnimationAssetRecord[]>;
-    resolveClipRef(input: AnimationClipResolveInput): Promise<ResolvedAnimationClipRef>;
+    resolveClipRef(input: AnimationClipResolveInput): Promise<AnimationClipRefRecord>;
     executeSceneMethod(method: string, args: unknown[]): Promise<AnimationSceneMethodResult>;
 }

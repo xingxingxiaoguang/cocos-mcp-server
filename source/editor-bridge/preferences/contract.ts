@@ -1,16 +1,16 @@
-import { PreferencesScope } from '../../capabilities/preferences/interface';
+export type PreferencesScopeValue = 'default' | 'global' | 'local';
 
 export interface PreferencesQueryConfigRequest {
     name: string;
     path?: string;
-    type: PreferencesScope;
+    type: PreferencesScopeValue;
 }
 
 export interface PreferencesSetConfigRequest {
     name: string;
     path: string;
     value: unknown;
-    type: PreferencesScope;
+    type: PreferencesScopeValue;
 }
 
 export interface PreferencesBridgeDriver {
