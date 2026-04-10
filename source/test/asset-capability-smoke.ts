@@ -1,51 +1,113 @@
 import * as assert from 'assert';
-import { AssetBridgeDriver } from '../editor-bridge/asset/contract';
+import {
+    AssetBridgeDriver,
+    AssetCopyInput,
+    AssetCreateInput,
+    AssetImportInput,
+    AssetMetadata,
+    AssetMoveInput,
+    AssetMutationResult,
+    AssetQueryInput,
+    AssetSaveInput,
+    AssetSaveMetaInput,
+} from '../editor-bridge/asset/contract';
 import { RuntimeProfile } from '../runtime/profile';
 import { createCapabilityRegistry } from '../runtime/capability-registry';
 
 class MockAssetDriver implements AssetBridgeDriver {
-    public readonly calls: Array<{ method: string; args: any[] }> = [];
+    public readonly calls: Array<{ method: string; args: unknown[] }> = [];
 
-    async requestAssetDb(message: string, ...args: unknown[]): Promise<any> {
-        this.calls.push({ method: message, args: args as any[] });
+    async queryReady(): Promise<boolean> {
+        this.calls.push({ method: 'query-ready', args: [] });
+        return true;
+    }
 
-        switch (message) {
-            case 'query-ready':
-                return true;
-            case 'query-assets':
-                return [
-                    {
-                        uuid: 'asset-1',
-                        url: 'db://assets/textures/a.png',
-                        name: 'a',
-                        type: 'cc.ImageAsset',
-                    },
-                ];
-            case 'create-asset':
-                return {
-                    uuid: 'asset-created',
-                    url: String(args[0]),
-                };
-            case 'query-asset-info':
-                return {
-                    uuid: 'asset-1',
-                    url: String(args[0]),
-                    path: String(args[0]),
-                    name: 'a',
-                    type: 'cc.ImageAsset',
-                };
-            case 'query-url':
-                return 'db://assets/textures/a.png';
-            case 'read-asset':
-                return '{"uuid":"asset-1"}';
-            case 'query-asset-meta':
-                return {
-                    ver: '1.0.0',
-                    importer: 'image',
-                };
-            default:
-                return null;
-        }
+    async queryAssetInfo(assetPath: string): Promise<AssetMetadata | null> {
+        this.calls.push({ method: 'query-asset-info', args: [assetPath] });
+        return {
+            uuid: 'asset-1',
+            url: assetPath,
+            path: assetPath,
+            name: 'a',
+            type: 'cc.ImageAsset',
+        };
+    }
+
+    async queryAssetMeta(urlOrUuid: string): Promise<Record<string, unknown>> {
+        this.calls.push({ method: 'query-asset-meta', args: [urlOrUuid] });
+        return { ver: '1.0.0', importer: 'image' };
+    }
+
+    async queryAssets(query: AssetQueryInput): Promise<AssetMetadata[]> {
+        this.calls.push({ method: 'query-assets', args: [query] });
+        return [{
+            uuid: 'asset-1',
+            url: 'db://assets/textures/a.png',
+            path: 'db://assets/textures/a.png',
+            name: 'a',
+            type: 'cc.ImageAsset',
+        }];
+    }
+
+    async queryAssetUrl(uuid: string): Promise<string | null> {
+        this.calls.push({ method: 'query-url', args: [uuid] });
+        return 'db://assets/textures/a.png';
+    }
+
+    async readAsset(urlOrUuid: string): Promise<string | unknown> {
+        this.calls.push({ method: 'read-asset', args: [urlOrUuid] });
+        return '{"uuid":"asset-1"}';
+    }
+
+    async generateAvailableUrl(url: string): Promise<string> {
+        this.calls.push({ method: 'generate-available-url', args: [url] });
+        return url;
+    }
+
+    async createAsset(input: AssetCreateInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'create-asset', args: [input] });
+        return { uuid: 'asset-created', url: input.url };
+    }
+
+    async importAsset(input: AssetImportInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'import-asset', args: [input] });
+        return { uuid: 'asset-imported', url: input.target };
+    }
+
+    async saveAsset(input: AssetSaveInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'save-asset', args: [input] });
+        return { uuid: 'asset-saved', url: input.url };
+    }
+
+    async saveAssetMeta(input: AssetSaveMetaInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'save-asset-meta', args: [input] });
+        return { uuid: 'asset-meta-saved', url: input.urlOrUuid };
+    }
+
+    async reimportAsset(url: string): Promise<void> {
+        this.calls.push({ method: 'reimport-asset', args: [url] });
+    }
+
+    async moveAsset(input: AssetMoveInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'move-asset', args: [input] });
+        return { uuid: 'asset-moved', url: input.target };
+    }
+
+    async copyAsset(input: AssetCopyInput): Promise<AssetMutationResult> {
+        this.calls.push({ method: 'copy-asset', args: [input] });
+        return { uuid: 'asset-copied', url: input.target };
+    }
+
+    async deleteAsset(url: string): Promise<void> {
+        this.calls.push({ method: 'delete-asset', args: [url] });
+    }
+
+    async refreshAsset(targetPath?: string): Promise<void> {
+        this.calls.push({ method: 'refresh-asset', args: [targetPath] });
+    }
+
+    async openAsset(urlOrUuid: string): Promise<void> {
+        this.calls.push({ method: 'open-asset', args: [urlOrUuid] });
     }
 }
 

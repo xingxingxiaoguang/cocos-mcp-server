@@ -1,90 +1,97 @@
 import * as assert from 'assert';
-import { ComponentBridgeDriver } from '../editor-bridge/component/contract';
+import {
+    ComponentBridgeDriver,
+    ComponentCreateInput,
+    ComponentCreateResult,
+    ComponentMethodInput,
+    ComponentResetInput,
+    ComponentSetPropertyInput,
+    RemoveArrayElementInput,
+} from '../editor-bridge/component/contract';
+import {
+    CocosNodeDump,
+    ComponentFunctionRecord,
+    ComponentTypeRecord,
+    NodeTreeItem,
+    SceneAssetInfo,
+    SceneAssetQueryInput,
+    SceneQueryDriver,
+} from '../editor-bridge/scene-query/contract';
 import { RuntimeProfile } from '../runtime/profile';
 import { createCapabilityRegistry } from '../runtime/capability-registry';
 
+class MockSceneQueryDriver implements SceneQueryDriver {
+    public readonly calls: Array<{ method: string; args: unknown[] }> = [];
+
+    async queryNode(uuid: string): Promise<CocosNodeDump> {
+        this.calls.push({ method: 'query-node', args: [uuid] });
+        return {
+            uuid:     { value: uuid },
+            name:     { value: 'TestNode' },
+            active:   { value: true },
+            position: { value: { x: 0, y: 0, z: 0 } },
+            rotation: { value: { x: 0, y: 0, z: 0 } },
+            scale:    { value: { x: 1, y: 1, z: 1 } },
+            parent:   { value: null },
+            children: [],
+            __comps__: [
+                { __type__: 'cc.Sprite', enabled: { value: true }, uuid: { value: 'comp-1' } },
+            ],
+        };
+    }
+
+    async queryNodeTree(): Promise<NodeTreeItem | NodeTreeItem[]> {
+        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
+    }
+
+    async queryCurrentScene(): Promise<NodeTreeItem> {
+        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
+    }
+
+    async queryNodesByAssetUuid(_assetUuid: string): Promise<string[]> { return []; }
+
+    async queryComponents(): Promise<ComponentTypeRecord[]> {
+        this.calls.push({ method: 'query-components', args: [] });
+        return [
+            { cid: 'cc.Sprite', name: 'cc.Sprite' },
+            { cid: 'cc.Label',  name: 'cc.Label' },
+        ];
+    }
+
+    async queryComponentFunctionsOfNode(nodeUuid: string): Promise<ComponentFunctionRecord[]> {
+        this.calls.push({ method: 'query-component-function-of-node', args: [nodeUuid] });
+        return [];
+    }
+
+    async executeSceneScript<T = unknown>(_method: string, _args: unknown[]): Promise<T> { return {} as T; }
+    async queryAssetInfo(_assetPath: string): Promise<SceneAssetInfo | null> { return null; }
+    async queryAssets(_query: SceneAssetQueryInput): Promise<SceneAssetInfo[]> { return []; }
+    async queryAssetUrl(_uuid: string): Promise<string | null> { return null; }
+}
+
 class MockComponentDriver implements ComponentBridgeDriver {
-    public readonly calls: Array<{ method: string; args: any[] }> = [];
+    public readonly calls: Array<{ method: string; args: unknown[] }> = [];
 
-    async queryComponentFunctionsOfNode(nodeUuid: string): Promise<any> {
-        return this.querySceneDispatch('query-component-function-of-node', nodeUuid);
+    async createComponent(input: ComponentCreateInput): Promise<ComponentCreateResult> {
+        this.calls.push({ method: 'create-component', args: [input] });
+        return { uuid: 'comp-created', componentType: input.component };
     }
 
-    async queryComponents(): Promise<any> {
-        return this.querySceneDispatch('query-components');
+    async removeArrayElement(input: RemoveArrayElementInput): Promise<void> {
+        this.calls.push({ method: 'remove-array-element', args: [input] });
     }
 
-    async queryNode(nodeUuid: string): Promise<any> {
-        return this.querySceneDispatch('query-node', nodeUuid);
+    async resetComponent(input: ComponentResetInput): Promise<void> {
+        this.calls.push({ method: 'reset-component', args: [input] });
     }
 
-    async queryNodeTree(): Promise<any> {
-        return this.querySceneDispatch('query-node-tree');
+    async executeComponentMethod(input: ComponentMethodInput): Promise<unknown> {
+        this.calls.push({ method: 'execute-component-method', args: [input] });
+        return {};
     }
 
-    async executeSceneScript(options: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('execute-scene-script', options);
-    }
-
-    async createComponent(payload: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('create-component', payload);
-    }
-
-    async removeArrayElement(payload: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('remove-array-element', payload);
-    }
-
-    async resetComponent(payload: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('reset-component', payload);
-    }
-
-    async executeComponentMethod(payload: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('execute-component-method', payload);
-    }
-
-    async setProperty(payload: Record<string, unknown>): Promise<any> {
-        return this.querySceneDispatch('set-property', payload);
-    }
-
-    async queryAssetInfo(assetPath: string): Promise<any> {
-        return this.queryAssetDispatch('query-asset-info', assetPath);
-    }
-
-    async queryAssets(query: Record<string, unknown>): Promise<any> {
-        return this.queryAssetDispatch('query-assets', query);
-    }
-
-    async queryAssetUrl(uuid: string): Promise<any> {
-        return this.queryAssetDispatch('query-url', uuid);
-    }
-
-    private async querySceneDispatch(message: string, ...args: unknown[]): Promise<any> {
-        this.calls.push({ method: message, args: args as any[] });
-
-        switch (message) {
-            case 'query-component-function-of-node':
-            case 'query-components':
-                return [
-                    { cid: 'cc.Sprite', name: 'cc.Sprite' },
-                    { cid: 'cc.Label', name: 'cc.Label' },
-                ];
-            case 'query-node':
-                return {
-                    uuid: 'node-1',
-                    __comps__: [
-                        { __type__: 'cc.Sprite', enabled: { value: true }, uuid: 'comp-1' },
-                    ],
-                };
-            case 'create-component':
-                return { uuid: 'comp-created' };
-            default:
-                return {};
-        }
-    }
-
-    private async queryAssetDispatch(message: string, ...args: unknown[]): Promise<any> {
-        this.calls.push({ method: message, args: args as any[] });
-        return null;
+    async setProperty(input: ComponentSetPropertyInput): Promise<void> {
+        this.calls.push({ method: 'set-property', args: [input] });
     }
 }
 
@@ -108,10 +115,12 @@ async function main(): Promise<void> {
         },
     };
 
-    const driver = new MockComponentDriver();
+    const sceneQueryDriver = new MockSceneQueryDriver();
+    const componentDriver = new MockComponentDriver();
     const registry = createCapabilityRegistry({
         profile,
-        componentDriver: driver,
+        sceneQueryDriver,
+        componentDriver,
     });
 
     const listed = await registry.component.query({ uuid: 'node-1' });
@@ -121,13 +130,12 @@ async function main(): Promise<void> {
     const added = await registry.component.add({ uuid: 'node-1', componentType: 'cc.Sprite' });
     assert.strictEqual(added.success, true);
 
-    assert.ok(driver.calls.some((call) => call.method === 'query-node'));
-    assert.ok(driver.calls.length >= 2);
+    assert.ok(sceneQueryDriver.calls.some((call) => call.method === 'query-node'));
+    assert.ok(componentDriver.calls.some((call) => call.method === 'create-component'));
     console.log('[component-capability-smoke] OK');
 }
 
 main().catch((error) => {
-    console.error('[component-capability-smoke] FAILED');
-    console.error(error);
+    console.error('[component-capability-smoke] FAILED:', error);
     process.exit(1);
 });

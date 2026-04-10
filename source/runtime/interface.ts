@@ -14,6 +14,7 @@ import type { PrefabBridgeDriver } from '../editor-bridge/prefab/contract';
 import type { ProjectBridgeDriver } from '../editor-bridge/project/contract';
 import type { PreferencesBridgeDriver } from '../editor-bridge/preferences/contract';
 import type { SceneBridgeDriver } from '../editor-bridge/scene/contract';
+import type { SceneQueryDriver } from '../editor-bridge/scene-query/contract';
 import type { RuntimeProfile } from './profile';
 
 export interface CapabilityRegistry {
@@ -30,6 +31,7 @@ export interface CapabilityRegistry {
 
 export interface CapabilityRegistryOptions {
     profile?: RuntimeProfile;
+    sceneQueryDriver?: SceneQueryDriver;
     assetDriver?: AssetBridgeDriver;
     assetCapability?: AssetCapability;
     componentDriver?: ComponentBridgeDriver;

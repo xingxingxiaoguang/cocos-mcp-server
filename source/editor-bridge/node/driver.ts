@@ -1,117 +1,88 @@
 import { RuntimeProfile } from '../../runtime/profile';
-import { NodeBridgeDriver } from './contract';
+import {
+    NodeBridgeDriver,
+    NodeCreateInput,
+    NodePasteInput,
+    NodeResetPropertyInput,
+    NodeSetParentInput,
+    NodeSetPropertyInput,
+} from './contract';
 
-const ASSET_DB_CHANNEL = 'asset-db';
 const SCENE_CHANNEL = 'scene';
 
 class EditorNodeDriver implements NodeBridgeDriver {
     constructor(private readonly profile: RuntimeProfile) {}
 
-    async queryNode(uuid: string): Promise<any> {
-        return this.requestSceneMessage('query-node', uuid);
+    async createNode(input: NodeCreateInput): Promise<string> {
+        this.ensureAvailable();
+        const result = await this.request('create-node', input);
+        // Editor 返回 uuid 字符串或数组
+        return Array.isArray(result) ? (result[0] as string) : (result as string);
     }
 
-    async queryNodeTree(): Promise<any> {
-        return this.requestSceneMessage('query-node-tree');
+    async setParent(input: NodeSetParentInput): Promise<void> {
+        this.ensureAvailable();
+        await this.request('set-parent', input);
     }
 
-    async executeSceneScript(options: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('execute-scene-script', options);
+    async setProperty(input: NodeSetPropertyInput): Promise<void> {
+        this.ensureAvailable();
+        await this.request('set-property', input);
     }
 
-    async queryNodesByAssetUuid(assetUuid: string): Promise<any> {
-        return this.requestSceneMessage('query-nodes-by-asset-uuid', assetUuid);
+    async resetProperty(input: NodeResetPropertyInput): Promise<void> {
+        this.ensureAvailable();
+        await this.request('reset-property', input);
     }
 
-    async queryComponentFunctionsOfNode(nodeUuid: string): Promise<any> {
-        return this.requestSceneMessage('query-component-function-of-node', nodeUuid);
+    async resetNode(uuid: string): Promise<void> {
+        this.ensureAvailable();
+        await this.request('reset-node', { uuid });
     }
 
-    async queryComponents(): Promise<any> {
-        return this.requestSceneMessage('query-components');
+    async removeNode(uuid: string): Promise<void> {
+        this.ensureAvailable();
+        await this.request('remove-node', { uuid });
     }
 
-    async queryCurrentScene(): Promise<any> {
-        return this.requestSceneMessage('query-current-scene');
+    async duplicateNode(uuid: string): Promise<string> {
+        this.ensureAvailable();
+        const result = await this.request('duplicate-node', uuid);
+        return Array.isArray(result) ? (result[0] as string) : (result as string);
     }
 
-    async queryAssetInfo(assetPath: string): Promise<any> {
-        return this.requestAssetDbMessage('query-asset-info', assetPath);
+    async copyNode(uuids: string[]): Promise<string[]> {
+        this.ensureAvailable();
+        const result = await this.request('copy-node', uuids);
+        return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
-    async queryAssets(query: Record<string, unknown>): Promise<any> {
-        return this.requestAssetDbMessage('query-assets', query);
+    async pasteNode(input: NodePasteInput): Promise<string[]> {
+        this.ensureAvailable();
+        const result = await this.request('paste-node', input);
+        return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
-    async queryAssetUrl(uuid: string): Promise<any> {
-        return this.requestAssetDbMessage('query-url', uuid);
+    async cutNode(uuids: string[]): Promise<string[]> {
+        this.ensureAvailable();
+        const result = await this.request('cut-node', uuids);
+        return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
-    async createNode(options: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('create-node', options);
-    }
+    // -------------------------------------------------------------------------
 
-    async setParent(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('set-parent', payload);
-    }
-
-    async setProperty(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('set-property', payload);
-    }
-
-    async resetProperty(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('reset-property', payload);
-    }
-
-    async resetNode(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('reset-node', payload);
-    }
-
-    async removeNode(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('remove-node', payload);
-    }
-
-    async duplicateNode(uuid: string): Promise<any> {
-        return this.requestSceneMessage('duplicate-node', uuid);
-    }
-
-    async copyNode(uuids: string | string[]): Promise<any> {
-        return this.requestSceneMessage('copy-node', uuids);
-    }
-
-    async pasteNode(payload: Record<string, unknown>): Promise<any> {
-        return this.requestSceneMessage('paste-node', payload);
-    }
-
-    async cutNode(uuids: string | string[]): Promise<any> {
-        return this.requestSceneMessage('cut-node', uuids);
-    }
-
-    private async requestSceneMessage(message: string, ...args: unknown[]): Promise<any> {
-        this.ensureRequestAvailable();
-        return this.request(SCENE_CHANNEL, message, ...args);
-    }
-
-    private async requestAssetDbMessage(message: string, ...args: unknown[]): Promise<any> {
-        this.ensureRequestAvailable();
-        return this.request(ASSET_DB_CHANNEL, message, ...args);
-    }
-
-    private async request(channel: string, message: string, ...args: unknown[]): Promise<any> {
+    private async request(message: string, ...args: unknown[]): Promise<unknown> {
         const request = (globalThis as any).Editor.Message.request as (
             targetChannel: string,
             targetMessage: string,
             ...payload: unknown[]
-        ) => Promise<any>;
-
-        return request(channel, message, ...args);
+        ) => Promise<unknown>;
+        return request(SCENE_CHANNEL, message, ...args);
     }
 
-    private ensureRequestAvailable(): void {
+    private ensureAvailable(): void {
         const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function'
-            || !this.profile.features.sceneQueryNodeTree
-            || !this.profile.features.assetQueryAssets) {
+        if (typeof request !== 'function' || !this.profile.features.sceneQueryNodeTree) {
             throw new Error('Editor.Message.request is unavailable in the current runtime');
         }
     }

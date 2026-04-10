@@ -1,142 +1,111 @@
 import * as assert from 'assert';
-import { NodeBridgeDriver } from '../editor-bridge/node/contract';
+import {
+    NodeBridgeDriver,
+    NodeCreateInput,
+    NodePasteInput,
+    NodeResetPropertyInput,
+    NodeSetParentInput,
+    NodeSetPropertyInput,
+} from '../editor-bridge/node/contract';
+import {
+    CocosNodeDump,
+    ComponentFunctionRecord,
+    ComponentTypeRecord,
+    NodeTreeItem,
+    SceneAssetInfo,
+    SceneAssetQueryInput,
+    SceneQueryDriver,
+} from '../editor-bridge/scene-query/contract';
 import { ComponentCapability } from '../capabilities/component/interface';
 import { RuntimeProfile } from '../runtime/profile';
 import { createCapabilityRegistry } from '../runtime/capability-registry';
 
+class MockSceneQueryDriver implements SceneQueryDriver {
+    async queryNode(uuid: string): Promise<CocosNodeDump> {
+        return {
+            uuid:     { value: uuid },
+            name:     { value: 'Player' },
+            active:   { value: true },
+            position: { value: { x: 0, y: 0, z: 0 } },
+            rotation: { value: { x: 0, y: 0, z: 0 } },
+            scale:    { value: { x: 1, y: 1, z: 1 } },
+            parent:   { value: null },
+            children: [],
+            __comps__: [],
+        };
+    }
+
+    async queryNodeTree(): Promise<NodeTreeItem | NodeTreeItem[]> {
+        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
+    }
+
+    async queryCurrentScene(): Promise<NodeTreeItem> {
+        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
+    }
+
+    async queryNodesByAssetUuid(_assetUuid: string): Promise<string[]> { return []; }
+    async queryComponents(): Promise<ComponentTypeRecord[]> { return []; }
+    async queryComponentFunctionsOfNode(_nodeUuid: string): Promise<ComponentFunctionRecord[]> { return []; }
+    async executeSceneScript<T = unknown>(_method: string, _args: unknown[]): Promise<T> { return {} as T; }
+    async queryAssetInfo(_assetPath: string): Promise<SceneAssetInfo | null> { return null; }
+    async queryAssets(_query: SceneAssetQueryInput): Promise<SceneAssetInfo[]> { return []; }
+    async queryAssetUrl(_uuid: string): Promise<string | null> { return null; }
+}
+
 class MockNodeDriver implements NodeBridgeDriver {
-    public readonly calls: Array<{ method: string; args: any[] }> = [];
+    public readonly calls: Array<{ method: string; args: unknown[] }> = [];
 
-    async queryNode(uuid: string): Promise<any> {
-        return this.sceneDispatch('query-node', uuid);
+    async createNode(input: NodeCreateInput): Promise<string> {
+        this.calls.push({ method: 'create-node', args: [input] });
+        return 'node-created';
     }
 
-    async queryNodeTree(): Promise<any> {
-        return this.sceneDispatch('query-node-tree');
+    async setParent(input: NodeSetParentInput): Promise<void> {
+        this.calls.push({ method: 'set-parent', args: [input] });
     }
 
-    async executeSceneScript(options: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('execute-scene-script', options);
+    async setProperty(input: NodeSetPropertyInput): Promise<void> {
+        this.calls.push({ method: 'set-property', args: [input] });
     }
 
-    async queryNodesByAssetUuid(assetUuid: string): Promise<any> {
-        return this.sceneDispatch('query-nodes-by-asset-uuid', assetUuid);
+    async resetProperty(input: NodeResetPropertyInput): Promise<void> {
+        this.calls.push({ method: 'reset-property', args: [input] });
     }
 
-    async queryComponentFunctionsOfNode(nodeUuid: string): Promise<any> {
-        return this.sceneDispatch('query-component-function-of-node', nodeUuid);
+    async resetNode(uuid: string): Promise<void> {
+        this.calls.push({ method: 'reset-node', args: [uuid] });
     }
 
-    async queryComponents(): Promise<any> {
-        return this.sceneDispatch('query-components');
+    async removeNode(uuid: string): Promise<void> {
+        this.calls.push({ method: 'remove-node', args: [uuid] });
     }
 
-    async queryCurrentScene(): Promise<any> {
-        return this.sceneDispatch('query-current-scene');
+    async duplicateNode(uuid: string): Promise<string> {
+        this.calls.push({ method: 'duplicate-node', args: [uuid] });
+        return 'dup-' + uuid;
     }
 
-    async queryAssetInfo(assetPath: string): Promise<any> {
-        return this.assetDispatch('query-asset-info', assetPath);
+    async copyNode(uuids: string[]): Promise<string[]> {
+        this.calls.push({ method: 'copy-node', args: uuids });
+        return uuids;
     }
 
-    async queryAssets(query: Record<string, unknown>): Promise<any> {
-        return this.assetDispatch('query-assets', query);
+    async pasteNode(input: NodePasteInput): Promise<string[]> {
+        this.calls.push({ method: 'paste-node', args: [input] });
+        return [];
     }
 
-    async queryAssetUrl(uuid: string): Promise<any> {
-        return this.assetDispatch('query-url', uuid);
-    }
-
-    async createNode(options: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('create-node', options);
-    }
-
-    async setParent(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('set-parent', payload);
-    }
-
-    async setProperty(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('set-property', payload);
-    }
-
-    async resetProperty(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('reset-property', payload);
-    }
-
-    async resetNode(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('reset-node', payload);
-    }
-
-    async removeNode(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('remove-node', payload);
-    }
-
-    async duplicateNode(uuid: string): Promise<any> {
-        return this.sceneDispatch('duplicate-node', uuid);
-    }
-
-    async copyNode(uuids: string | string[]): Promise<any> {
-        return this.sceneDispatch('copy-node', uuids);
-    }
-
-    async pasteNode(payload: Record<string, unknown>): Promise<any> {
-        return this.sceneDispatch('paste-node', payload);
-    }
-
-    async cutNode(uuids: string | string[]): Promise<any> {
-        return this.sceneDispatch('cut-node', uuids);
-    }
-
-    private async sceneDispatch(message: string, ...args: unknown[]): Promise<any> {
-        this.calls.push({ method: message, args: args as any[] });
-
-        switch (message) {
-            case 'query-node':
-                return {
-                    uuid: 'node-1',
-                    name: 'Player',
-                    active: true,
-                    position: { value: { x: 0, y: 0, z: 0 } },
-                    rotation: { value: { x: 0, y: 0, z: 0 } },
-                    scale: { value: { x: 1, y: 1, z: 1 } },
-                    parent: null,
-                    children: [],
-                    __comps__: [],
-                };
-            case 'create-node':
-                return 'node-created';
-            case 'query-node-tree':
-                return {
-                    uuid: 'scene-1',
-                    children: [],
-                };
-            case 'query-component-function-of-node':
-            case 'query-components':
-                return [];
-            default:
-                return {};
-        }
-    }
-
-    private async assetDispatch(message: string, ...args: unknown[]): Promise<any> {
-        this.calls.push({ method: message, args: args as any[] });
-        return null;
+    async cutNode(uuids: string[]): Promise<string[]> {
+        this.calls.push({ method: 'cut-node', args: uuids });
+        return uuids;
     }
 }
 
 const mockComponentCapability: ComponentCapability = {
-    async query(): Promise<any> {
-        return { success: true, data: [] };
-    },
-    async add(): Promise<any> {
-        return { success: true, data: {} };
-    },
-    async modify(): Promise<any> {
-        return { success: true, data: {} };
-    },
-    async batchSet(): Promise<any> {
-        return { success: true, data: {} };
-    },
+    async query(): Promise<any> { return { success: true, data: [] }; },
+    async add(): Promise<any>   { return { success: true, data: {} }; },
+    async modify(): Promise<any> { return { success: true, data: {} }; },
+    async batchSet(): Promise<any> { return { success: true, data: {} }; },
 };
 
 async function main(): Promise<void> {
@@ -159,10 +128,12 @@ async function main(): Promise<void> {
         },
     };
 
-    const driver = new MockNodeDriver();
+    const sceneQueryDriver = new MockSceneQueryDriver();
+    const nodeDriver = new MockNodeDriver();
     const registry = createCapabilityRegistry({
         profile,
-        nodeDriver: driver,
+        sceneQueryDriver,
+        nodeDriver,
         componentCapability: mockComponentCapability,
     });
 
@@ -173,13 +144,11 @@ async function main(): Promise<void> {
     const created = await registry.node.create({ name: 'Player' });
     assert.strictEqual(created.success, true);
 
-    assert.ok(driver.calls.some((call) => call.method === 'query-node'));
-    assert.ok(driver.calls.some((call) => call.method === 'create-node'));
+    assert.ok(nodeDriver.calls.some((call) => call.method === 'create-node'));
     console.log('[node-capability-smoke] OK');
 }
 
 main().catch((error) => {
-    console.error('[node-capability-smoke] FAILED');
-    console.error(error);
+    console.error('[node-capability-smoke] FAILED:', error);
     process.exit(1);
 });

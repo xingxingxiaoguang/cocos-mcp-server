@@ -1,8 +1,9 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import type { NodeCapability } from '../../capabilities/node/interface';
 
 export class NodeToolsV2 implements ToolExecutor {
-    private readonly node = getCapabilityRegistry().node as any;
+    private readonly node: NodeCapability = getCapabilityRegistry().node;
 
     getTools(): ToolDefinition[] {
         return [
@@ -372,7 +373,7 @@ export class NodeToolsV2 implements ToolExecutor {
             case 'modify':
                 return this.node.modify(args);
             case 'delete':
-                return this.node.delete(args);
+                return this.node.delete(args.uuids);
             case 'arrange':
                 return this.node.arrange(args);
             default:

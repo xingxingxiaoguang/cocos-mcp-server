@@ -1,8 +1,9 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import type { ComponentCapability } from '../../capabilities/component/interface';
 
 export class ComponentToolsV2 implements ToolExecutor {
-    private readonly component = getCapabilityRegistry().component as any;
+    private readonly component: ComponentCapability = getCapabilityRegistry().component;
 
     getTools(): ToolDefinition[] {
         return [

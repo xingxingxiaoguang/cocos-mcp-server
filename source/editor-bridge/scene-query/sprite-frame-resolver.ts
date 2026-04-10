@@ -1,8 +1,8 @@
-import { NodeBridgeDriver } from '../../editor-bridge/node/contract';
+import { SceneQueryDriver } from './contract';
 
 export async function resolveSpriteFrameUuidFromAssetInfo(
-    driver: Pick<NodeBridgeDriver, 'queryAssetUrl'>,
-    assetInfo: any,
+    driver: Pick<SceneQueryDriver, 'queryAssetUrl'>,
+    assetInfo: { uuid?: string; type?: string; subAssets?: unknown },
 ): Promise<string | null> {
     const assetUuid = String(assetInfo?.uuid || '').trim();
     if (!assetUuid) {
@@ -16,9 +16,10 @@ export async function resolveSpriteFrameUuidFromAssetInfo(
 
     const subAssets = Array.isArray(assetInfo?.subAssets)
         ? assetInfo.subAssets
-        : (assetInfo?.subAssets && Array.isArray(assetInfo.subAssets.value) ? assetInfo.subAssets.value : []);
+        : [];
+
     if (Array.isArray(subAssets)) {
-        const spriteFrameSubAsset = subAssets.find((subAsset: any) => {
+        const spriteFrameSubAsset = (subAssets as Array<{ type?: string; uuid?: string }>).find((subAsset) => {
             const subType = String(subAsset?.type || '').toLowerCase();
             return subType === 'cc.spriteframe' || subType === 'spriteframe';
         });
@@ -40,7 +41,7 @@ export async function resolveSpriteFrameUuidFromAssetInfo(
 }
 
 export async function resolveDefaultSpriteFrameUuid(
-    driver: Pick<NodeBridgeDriver, 'queryAssetInfo' | 'queryAssets' | 'queryAssetUrl'>,
+    driver: Pick<SceneQueryDriver, 'queryAssetInfo' | 'queryAssets' | 'queryAssetUrl'>,
 ): Promise<string | null> {
     const candidates = [
         'db://internal/default_ui/default_sprite.png',
@@ -52,7 +53,7 @@ export async function resolveDefaultSpriteFrameUuid(
 
     for (const candidate of candidates) {
         try {
-            const assetInfo: any = await driver.queryAssetInfo(candidate);
+            const assetInfo = await driver.queryAssetInfo(candidate);
             if (assetInfo && assetInfo.uuid) {
                 const resolvedUuid = await resolveSpriteFrameUuidFromAssetInfo(driver, assetInfo);
                 if (resolvedUuid) {
@@ -71,16 +72,16 @@ export async function resolveDefaultSpriteFrameUuid(
 
     for (const pattern of searchPatterns) {
         try {
-            const assets: any = await driver.queryAssets({ pattern });
+            const assets = await driver.queryAssets({ pattern });
             if (!Array.isArray(assets)) {
                 continue;
             }
 
-            const matched = assets.find((asset: any) => {
+            const matched = assets.find((asset) => {
                 const url = String(asset?.url || asset?.path || asset?.name || '').toLowerCase();
                 const type = String(asset?.type || '').toLowerCase();
                 return type === 'cc.spriteframe' && url.includes('default_sprite');
-            }) || assets.find((asset: any) => {
+            }) || assets.find((asset) => {
                 const url = String(asset?.url || asset?.path || asset?.name || '').toLowerCase();
                 return url.includes('default_sprite');
             });

@@ -1,5 +1,1 @@
-export interface ComponentInfo {
-    type: string;
-    enabled: boolean;
-    properties?: Record<string, any>;
-}
+export type { ComponentInfo } from '../../../editor-bridge/scene-query/contract';

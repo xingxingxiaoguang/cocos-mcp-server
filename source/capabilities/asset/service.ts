@@ -1,5 +1,12 @@
 import { ToolResponse } from '../../mcp/interface';
-import { AssetCapability, AssetInfo } from './interface';
+import {
+    AssetCapability,
+    AssetCreateInput,
+    AssetDeleteInput,
+    AssetModifyInput,
+    AssetQueryInput,
+    AssetRefreshInput,
+} from './interface';
 import { AssetBridgeDriver } from '../../editor-bridge/asset/contract';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,24 +23,24 @@ export class AssetService implements AssetCapability {
         '.graph', '.csv', '.md', '.html', '.css'
     ];
 
-    async query(args: any): Promise<ToolResponse> {
-        return this.handleQuery(args);
+    async query(input: AssetQueryInput): Promise<ToolResponse> {
+        return this.handleQuery(input);
     }
 
-    async create(args: any): Promise<ToolResponse> {
-        return this.handleCreate(args);
+    async create(input: AssetCreateInput): Promise<ToolResponse> {
+        return this.handleCreate(input);
     }
 
-    async modify(args: any): Promise<ToolResponse> {
-        return this.handleModify(args);
+    async modify(input: AssetModifyInput): Promise<ToolResponse> {
+        return this.handleModify(input);
     }
 
-    async delete(args: any): Promise<ToolResponse> {
-        return this.handleDelete(args);
+    async delete(input: AssetDeleteInput): Promise<ToolResponse> {
+        return this.handleDelete(input);
     }
 
-    async refresh(args: any): Promise<ToolResponse> {
-        return this.handleRefresh(args);
+    async refresh(input: AssetRefreshInput): Promise<ToolResponse> {
+        return this.handleRefresh(input);
     }
 
     // ==================== query ====================
@@ -66,7 +73,7 @@ export class AssetService implements AssetCapability {
 
     private async queryAssetDbReady(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            this.driver.requestAssetDb('query-ready').then((ready: boolean) => {
+            this.driver.queryReady().then((ready: boolean) => {
                 resolve({
                     success: true,
                     data: {
@@ -177,7 +184,7 @@ export class AssetService implements AssetCapability {
         const candidates = new Set<string>([this.normalizeDbUrl(input)]);
         if (!input.startsWith('db://')) {
             try {
-                const resolvedUrl = await this.driver.requestAssetDb('query-url', input);
+                const resolvedUrl = await this.driver.queryAssetUrl(input);
                 if (resolvedUrl) {
                     candidates.add(this.normalizeDbUrl(String(resolvedUrl)));
                 }
@@ -188,7 +195,7 @@ export class AssetService implements AssetCapability {
 
         for (const candidate of candidates) {
             try {
-                const assetInfo: any = await this.driver.requestAssetDb('query-asset-info', candidate);
+                const assetInfo: any = await this.driver.queryAssetInfo(candidate);
                 if (assetInfo) {
                     const url = this.normalizeDbUrl(assetInfo.url || assetInfo.path || candidate);
                     return {
@@ -308,7 +315,7 @@ export class AssetService implements AssetCapability {
 
     private async readAssetMeta(uuid: string, assetUrl: string): Promise<any | null> {
         try {
-            const metaInfo = await this.driver.requestAssetDb('query-asset-meta', uuid);
+            const metaInfo = await this.driver.queryAssetMeta(uuid);
             if (metaInfo) {
                 return metaInfo;
             }
@@ -330,7 +337,7 @@ export class AssetService implements AssetCapability {
 
     private async readAssetContent(assetUrl: string): Promise<string | null> {
         try {
-            const content = await this.driver.requestAssetDb('read-asset', assetUrl);
+            const content = await this.driver.readAsset(assetUrl);
             if (typeof content === 'string') {
                 return content;
             }
@@ -447,7 +454,7 @@ export class AssetService implements AssetCapability {
     private async queryByUuid(uuid: string, includeSubAssets: boolean = true): Promise<ToolResponse> {
         try {
             // First get url from uuid
-            const url: string | null = await this.driver.requestAssetDb('query-url', uuid);
+            const url = await this.driver.queryAssetUrl(uuid);
             if (!url) {
                 return { success: false, error: 'Asset not found for given UUID' };
             }
@@ -459,7 +466,7 @@ export class AssetService implements AssetCapability {
 
     private async queryByPath(assetPath: string, includeSubAssets: boolean = true): Promise<ToolResponse> {
         try {
-            const assetInfo: any = await this.driver.requestAssetDb('query-asset-info', assetPath);
+            const assetInfo: any = await this.driver.queryAssetInfo(assetPath);
             if (!assetInfo) {
                 return { success: false, error: 'Asset not found' };
             }
@@ -492,7 +499,7 @@ export class AssetService implements AssetCapability {
 
                 for (const subAsset of possibleSubAssets) {
                     try {
-                        const subAssetUrl = await this.driver.requestAssetDb('query-url', subAsset.uuid);
+                        const subAssetUrl = await this.driver.queryAssetUrl(subAsset.uuid);
                         if (subAssetUrl) {
                             info.subAssets.push({
                                 type: subAsset.type,
@@ -594,7 +601,7 @@ export class AssetService implements AssetCapability {
                 }
             }
 
-            this.driver.requestAssetDb('query-assets', { pattern }).then((results: any[]) => {
+            this.driver.queryAssets({ pattern }).then((results: any[]) => {
                 const assets = results.map(asset => ({
                     name: asset.name,
                     uuid: asset.uuid,
@@ -694,7 +701,7 @@ export class AssetService implements AssetCapability {
     private async createAsset(url: string, content: string | null = null, overwrite: boolean = false): Promise<ToolResponse> {
         return new Promise((resolve) => {
             const options = { overwrite, rename: !overwrite };
-            this.driver.requestAssetDb('create-asset', url, content, options).then((result: any) => {
+            this.driver.createAsset({ url, content: content ?? '', overwrite: options.overwrite, rename: options.rename }).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -719,7 +726,7 @@ export class AssetService implements AssetCapability {
             const fileName = path.basename(sourcePath);
             const target = targetPath.startsWith('db://') ? targetPath : `db://assets/${targetPath}`;
 
-            this.driver.requestAssetDb('import-asset', sourcePath, `${target}/${fileName}`).then((result: any) => {
+            this.driver.importAsset({ source: sourcePath, target: `${target}/${fileName}` }).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -751,8 +758,7 @@ export class AssetService implements AssetCapability {
                 try {
                     const fileName = path.basename(filePath);
                     const targetPath = `${targetDirectory}/${fileName}`;
-                    const result = await this.driver.requestAssetDb('import-asset',
-                        filePath, targetPath, { overwrite, rename: !overwrite });
+                    const result = await this.driver.importAsset({ source: filePath, target: targetPath });
 
                     importResults.push({ source: filePath, target: targetPath, success: true, uuid: result?.uuid });
                     successCount++;
@@ -821,7 +827,7 @@ export class AssetService implements AssetCapability {
     private async moveAsset(source: string, target: string, overwrite: boolean = false): Promise<ToolResponse> {
         return new Promise((resolve) => {
             const options = { overwrite, rename: !overwrite };
-            this.driver.requestAssetDb('move-asset', source, target, options).then((result: any) => {
+            this.driver.moveAsset({ source, target }).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -841,7 +847,7 @@ export class AssetService implements AssetCapability {
     private async copyAsset(source: string, target: string, overwrite: boolean = false): Promise<ToolResponse> {
         return new Promise((resolve) => {
             const options = { overwrite, rename: !overwrite };
-            this.driver.requestAssetDb('copy-asset', source, target, options).then((result: any) => {
+            this.driver.copyAsset({ source, target }).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -860,7 +866,7 @@ export class AssetService implements AssetCapability {
 
     private async saveAsset(url: string, content: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            this.driver.requestAssetDb('save-asset', url, content).then((result: any) => {
+            this.driver.saveAsset({ url, content }).then((result: any) => {
                 resolve({
                     success: true,
                     data: {
@@ -876,33 +882,28 @@ export class AssetService implements AssetCapability {
     }
 
     private async reimportAsset(url: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.requestAssetDb('reimport-asset', url).then(() => {
-                resolve({
-                    success: true,
-                    data: { url, message: 'Asset reimported successfully' }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            await this.driver.reimportAsset(url);
+            return { success: true, data: { url, message: 'Asset reimported successfully' } };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     }
 
     private async saveAssetMeta(urlOrUUID: string, content: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.requestAssetDb('save-asset-meta', urlOrUUID, content).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result?.uuid,
-                        url: result?.url,
-                        message: 'Asset meta saved successfully'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            const result = await this.driver.saveAssetMeta({ urlOrUuid: urlOrUUID, content });
+            return {
+                success: true,
+                data: {
+                    uuid: result?.uuid,
+                    url: result?.url,
+                    message: 'Asset meta saved successfully'
+                }
+            };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     }
 
     private async compressTextures(texturePaths: string[], format: string): Promise<ToolResponse> {
@@ -918,16 +919,12 @@ export class AssetService implements AssetCapability {
         const urls = Array.isArray(args.urls) ? args.urls : [args.urls];
 
         if (urls.length === 1) {
-            return new Promise((resolve) => {
-                this.driver.requestAssetDb('delete-asset', urls[0]).then(() => {
-                    resolve({
-                        success: true,
-                        data: { url: urls[0], message: 'Asset deleted successfully' }
-                    });
-                }).catch((err: Error) => {
-                    resolve({ success: false, error: err.message });
-                });
-            });
+            try {
+                await this.driver.deleteAsset(urls[0]);
+                return { success: true, data: { url: urls[0], message: 'Asset deleted successfully' } };
+            } catch (err: any) {
+                return { success: false, error: err.message };
+            }
         }
 
         // Batch delete
@@ -937,7 +934,7 @@ export class AssetService implements AssetCapability {
 
         for (const url of urls) {
             try {
-                await this.driver.requestAssetDb('delete-asset', url);
+                await this.driver.deleteAsset(url);
                 deleteResults.push({ url, success: true });
                 successCount++;
             } catch (err: any) {
@@ -979,46 +976,43 @@ export class AssetService implements AssetCapability {
     }
 
     private async refreshAssets(folder?: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
+        try {
             const targetPath = folder || 'db://assets';
-            this.driver.requestAssetDb('refresh-asset', targetPath).then(() => {
-                resolve({ success: true, message: `Assets refreshed in: ${targetPath}` });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+            await this.driver.refreshAsset(targetPath);
+            return { success: true, message: `Assets refreshed in: ${targetPath}` };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     }
 
     private async generateAvailableUrl(url: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.requestAssetDb('generate-available-url', url).then((availableUrl: string) => {
-                resolve({
-                    success: true,
-                    data: {
-                        originalUrl: url,
-                        availableUrl,
-                        message: availableUrl === url ? 'URL is available' : 'Generated new available URL'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            const availableUrl = await this.driver.generateAvailableUrl(url);
+            return {
+                success: true,
+                data: {
+                    originalUrl: url,
+                    availableUrl,
+                    message: availableUrl === url ? 'URL is available' : 'Generated new available URL'
+                }
+            };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     }
 
     private async openAssetExternal(urlOrUUID: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.requestAssetDb('open-asset', urlOrUUID).then(() => {
-                resolve({ success: true, message: 'Asset opened with external program' });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            await this.driver.openAsset(urlOrUUID);
+            return { success: true, message: 'Asset opened with external program' };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
     }
 
     private async exportAssetManifest(directory: string = 'db://assets', format: string = 'json', includeMetadata: boolean = true): Promise<ToolResponse> {
         try {
-            const assets = await this.driver.requestAssetDb('query-assets', { pattern: `${directory}/**/*` });
+            const assets = await this.driver.queryAssets({ pattern: `${directory}/**/*` });
             const manifest: any[] = [];
 
             for (const asset of assets) {
@@ -1027,15 +1021,15 @@ export class AssetService implements AssetCapability {
                     url: asset.url,
                     uuid: asset.uuid,
                     type: asset.type,
-                    size: (asset as any).size || 0,
+                    size: asset.size || 0,
                     isDirectory: asset.isDirectory || false
                 };
 
                 if (includeMetadata) {
                     try {
-                        const assetInfo = await this.driver.requestAssetDb('query-asset-info', asset.url);
-                        if (assetInfo?.meta) {
-                            manifestEntry.meta = assetInfo.meta;
+                        const assetInfo = await this.driver.queryAssetInfo(asset.url ?? asset.path);
+                        if (assetInfo && (assetInfo as any).meta) {
+                            manifestEntry.meta = (assetInfo as any).meta;
                         }
                     } catch {
                         // Skip metadata if not available
@@ -1075,13 +1069,13 @@ export class AssetService implements AssetCapability {
 
     private async validateAssetReferences(directory: string = 'db://assets'): Promise<ToolResponse> {
         try {
-            const assets = await this.driver.requestAssetDb('query-assets', { pattern: `${directory}/**/*` });
+            const assets = await this.driver.queryAssets({ pattern: `${directory}/**/*` });
             const brokenReferences: any[] = [];
             const validCount = { value: 0 };
 
             for (const asset of assets) {
                 try {
-                    const assetInfo = await this.driver.requestAssetDb('query-asset-info', asset.url);
+                    const assetInfo = await this.driver.queryAssetInfo(asset.url ?? asset.path);
                     if (assetInfo) {
                         validCount.value++;
                     }

@@ -1,8 +1,9 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import type { AssetCapability } from '../../capabilities/asset/interface';
 
 export class AssetToolsV2 implements ToolExecutor {
-    private readonly asset = getCapabilityRegistry().asset as any;
+    private readonly asset: AssetCapability = getCapabilityRegistry().asset;
 
     getTools(): ToolDefinition[] {
         return [

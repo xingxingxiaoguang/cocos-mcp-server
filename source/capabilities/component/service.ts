@@ -1,6 +1,14 @@
 import { ToolResponse } from '../../mcp/interface';
-import { ComponentCapability, ComponentInfo } from './interface';
+import {
+    ComponentAddInput,
+    ComponentBatchSetInput,
+    ComponentCapability,
+    ComponentModifyInput,
+    ComponentQueryInput,
+} from './interface';
 import { ComponentBridgeDriver } from '../../editor-bridge/component/contract';
+import { SceneQueryDriver } from '../../editor-bridge/scene-query/contract';
+import { normalizeComponentType } from '../../editor-bridge/scene-query/normalizer';
 import { safeSerialize } from '../../utils/serializer';
 
 interface ComponentSetContext {
@@ -22,21 +30,25 @@ interface PreparedBatchSetContext {
 }
 
 export class ComponentService implements ComponentCapability {
-    constructor(private readonly driver: ComponentBridgeDriver) {}
-    async query(args: any): Promise<ToolResponse> {
-        return this.handleQuery(args);
+    constructor(
+        private readonly sceneQuery: SceneQueryDriver,
+        private readonly driver: ComponentBridgeDriver,
+    ) {}
+
+    async query(input: ComponentQueryInput): Promise<ToolResponse> {
+        return this.handleQuery(input);
     }
 
-    async add(args: any): Promise<ToolResponse> {
-        return this.handleAdd(args);
+    async add(input: ComponentAddInput): Promise<ToolResponse> {
+        return this.handleAdd(input);
     }
 
-    async modify(args: any): Promise<ToolResponse> {
-        return this.handleModify(args);
+    async modify(input: ComponentModifyInput): Promise<ToolResponse> {
+        return this.handleModify(input);
     }
 
-    async batchSet(args: any): Promise<ToolResponse> {
-        return this.batchSetComponentProperties(args);
+    async batchSet(input: ComponentBatchSetInput): Promise<ToolResponse> {
+        return this.batchSetComponentProperties(input);
     }
 
     // ============================================================
@@ -121,7 +133,7 @@ export class ComponentService implements ComponentCapability {
         };
 
         try {
-            const result = await this.driver.queryComponentFunctionsOfNode('');
+            const result = await this.sceneQuery.queryComponentFunctionsOfNode('');
             if (Array.isArray(result)) {
                 build(result);
                 return map;
@@ -131,7 +143,7 @@ export class ComponentService implements ComponentCapability {
         }
 
         try {
-            const result = await this.driver.queryComponents();
+            const result = await this.sceneQuery.queryComponents();
             if (Array.isArray(result)) {
                 build(result);
             }
@@ -142,19 +154,8 @@ export class ComponentService implements ComponentCapability {
         return map;
     }
 
-    private normalizeComponentType(rawType: any): string {
-        if (rawType && typeof rawType === 'object') {
-            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
-            if (nested !== undefined && nested !== null) {
-                return String(nested);
-            }
-        }
-        if (rawType === undefined || rawType === null) return 'Unknown';
-        return String(rawType);
-    }
-
     private resolveComponentType(rawType: any, cidMap: Map<string, string>): { type: string; cid?: string } {
-        const normalizedType = this.normalizeComponentType(rawType);
+        const normalizedType = normalizeComponentType(rawType);
         const resolvedType = cidMap.get(normalizedType) || normalizedType;
         if (resolvedType !== normalizedType) {
             return { type: resolvedType, cid: normalizedType };
@@ -163,9 +164,9 @@ export class ComponentService implements ComponentCapability {
     }
 
     private isComponentMatch(component: any, componentType: string): boolean {
-        const target = this.normalizeComponentType(componentType);
-        const type = this.normalizeComponentType(component?.type);
-        const cid = component?.cid ? this.normalizeComponentType(component.cid) : '';
+        const target = normalizeComponentType(componentType);
+        const type = normalizeComponentType(component?.type);
+        const cid = component?.cid ? normalizeComponentType(component.cid) : '';
         return type === target || cid === target;
     }
 
@@ -178,16 +179,16 @@ export class ComponentService implements ComponentCapability {
     }
 
     private getComponentAliases(componentType: string, cidMap: Map<string, string>): Set<string> {
-        const normalized = this.normalizeComponentType(componentType);
+        const normalized = normalizeComponentType(componentType);
         const aliases = new Set<string>([normalized]);
         const mapped = cidMap.get(normalized);
         if (mapped) {
-            aliases.add(this.normalizeComponentType(mapped));
+            aliases.add(normalizeComponentType(mapped));
         }
 
         for (const [cid, name] of cidMap.entries()) {
             if (name === normalized) {
-                aliases.add(this.normalizeComponentType(cid));
+                aliases.add(normalizeComponentType(cid));
                 break;
             }
         }
@@ -199,7 +200,7 @@ export class ComponentService implements ComponentCapability {
         const cidMap = await this.buildCidNameMap();
 
         try {
-            const nodeData = await this.driver.queryNode(nodeUuid);
+            const nodeData = await this.sceneQuery.queryNode(nodeUuid);
             if (nodeData && nodeData.__comps__) {
                 const components = nodeData.__comps__.map((comp: any) => {
                     const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
@@ -217,14 +218,8 @@ export class ComponentService implements ComponentCapability {
 
             return { success: false, error: 'Node not found or no components data' };
         } catch (err: any) {
-            const options = {
-                name: 'cocos-mcp-server',
-                method: 'getNodeInfo',
-                args: [nodeUuid]
-            };
-
             try {
-                const result = await this.driver.executeSceneScript(options);
+                const result = await this.sceneQuery.executeSceneScript<any>('getNodeInfo', [nodeUuid]);
                 if (!result?.success) {
                     return { success: false, error: result?.error || 'Scene script fallback failed' };
                 }
@@ -301,11 +296,7 @@ export class ComponentService implements ComponentCapability {
     private async querySceneClasses(extendsClass?: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // 委托给场景进程执行（修复缺陷5：主进程无法访问场景进程注册的类）
-            this.driver.executeSceneScript({
-                name: 'cocos-mcp-server',
-                method: 'getRegisteredClasses',
-                args: [extendsClass]
-            }).then((result: any) => {
+            this.sceneQuery.executeSceneScript('getRegisteredClasses', [extendsClass]).then((result: any) => {
                 if (!result || !result.success) {
                     resolve({ success: false, error: result?.error || 'getRegisteredClasses failed' });
                     return;
@@ -322,7 +313,7 @@ export class ComponentService implements ComponentCapability {
 
     private async querySceneComponents(): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            this.driver.queryComponents().then((components: any[]) => {
+            this.sceneQuery.queryComponents().then((components: any[]) => {
                 resolve({
                     success: true,
                     data: { components, count: components.length }
@@ -336,11 +327,7 @@ export class ComponentService implements ComponentCapability {
     private async queryComponentHasScript(className: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             // 通过场景进程验证类是否已注册（修复缺陷5）
-            this.driver.executeSceneScript({
-                name: 'cocos-mcp-server',
-                method: 'getRegisteredClasses',
-                args: [undefined]
-            }).then((result: any) => {
+            this.sceneQuery.executeSceneScript('getRegisteredClasses', [undefined]).then((result: any) => {
                 if (!result || !result.success) {
                     resolve({ success: false, error: result?.error || 'getRegisteredClasses failed' });
                     return;
@@ -393,11 +380,7 @@ export class ComponentService implements ComponentCapability {
             });
         } catch (err: any) {
             try {
-                const fallbackResult = await this.driver.executeSceneScript({
-                    name: 'cocos-mcp-server',
-                    method: 'addComponentToNode',
-                    args: [nodeUuid, componentType]
-                });
+                const fallbackResult = await this.sceneQuery.executeSceneScript<any>('addComponentToNode', [nodeUuid, componentType]);
                 if (!fallbackResult?.success) {
                     return { success: false, error: fallbackResult?.error || err.message };
                 }
@@ -429,7 +412,7 @@ export class ComponentService implements ComponentCapability {
                 }
             };
 
-            if (this.normalizeComponentType(addedComponent.type) === 'cc.Sprite') {
+            if (normalizeComponentType(addedComponent.type) === 'cc.Sprite') {
                 const spriteSetup = await this.ensureDefaultSpriteComponentState(nodeUuid);
                 if (spriteSetup.warning) {
                     response.warning = spriteSetup.warning;
@@ -451,7 +434,7 @@ export class ComponentService implements ComponentCapability {
                 }
             };
 
-            if (this.normalizeComponentType(componentType) === 'cc.Sprite') {
+            if (normalizeComponentType(componentType) === 'cc.Sprite') {
                 const spriteSetup = await this.ensureDefaultSpriteComponentState(nodeUuid);
                 if (spriteSetup.warning) {
                     response.warning = spriteSetup.warning;
@@ -495,11 +478,7 @@ export class ComponentService implements ComponentCapability {
             });
         } catch (err: any) {
             try {
-                const fallbackResult = await this.driver.executeSceneScript({
-                    name: 'cocos-mcp-server',
-                    method: 'addComponentToNode',
-                    args: [nodeUuid, scriptName]
-                });
+                const fallbackResult = await this.sceneQuery.executeSceneScript<any>('addComponentToNode', [nodeUuid, scriptName]);
                 if (!fallbackResult?.success) {
                     return {
                         success: false,
@@ -577,11 +556,7 @@ export class ComponentService implements ComponentCapability {
             });
         } catch (err: any) {
             try {
-                const fallbackResult = await this.driver.executeSceneScript({
-                    name: 'cocos-mcp-server',
-                    method: 'removeComponentFromNode',
-                    args: [nodeUuid, componentType]
-                });
+                const fallbackResult = await this.sceneQuery.executeSceneScript<any>('removeComponentFromNode', [nodeUuid, componentType]);
                 if (!fallbackResult?.success) {
                     return { success: false, error: `Failed to remove component: ${fallbackResult?.error || err.message}` };
                 }
@@ -611,7 +586,7 @@ export class ComponentService implements ComponentCapability {
     // Migrated from SceneAdvancedTools
     private async resetComponent(uuid: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
-            this.driver.resetComponent({ uuid }).then(() => {
+            this.driver.resetComponent({ uuid: uuid }).then(() => {
                 resolve({ success: true, message: 'Component reset to default values' });
             }).catch((err: Error) => {
                 resolve({ success: false, error: err.message });
@@ -623,7 +598,7 @@ export class ComponentService implements ComponentCapability {
     private async executeComponentMethod(uuid: string, name: string, args: any[] = []): Promise<ToolResponse> {
         return new Promise((resolve) => {
             this.driver.executeComponentMethod({
-                uuid, name, args
+                uuid, component: name, method: name, args
             }).then((result: any) => {
                 resolve({
                     success: true,
@@ -751,7 +726,7 @@ export class ComponentService implements ComponentCapability {
 
         let rawNodeData: any;
         try {
-            rawNodeData = await this.driver.queryNode(nodeUuid);
+            rawNodeData = await this.sceneQuery.queryNode(nodeUuid);
         } catch (err: any) {
             return {
                 success: false,
@@ -827,7 +802,7 @@ export class ComponentService implements ComponentCapability {
             const comp = rawNodeData.__comps__[i] as any;
             const rawType = comp.__type__ || comp.cid || comp.type || 'Unknown';
             const resolved = this.resolveComponentType(rawType, cidMap);
-            const rawTypeNormalized = this.normalizeComponentType(rawType);
+            const rawTypeNormalized = normalizeComponentType(rawType);
             if (componentAliases.has(rawTypeNormalized) || componentAliases.has(resolved.type)) {
                 return i;
             }
@@ -886,7 +861,7 @@ export class ComponentService implements ComponentCapability {
 
         let rawNodeData: any;
         try {
-            rawNodeData = await this.driver.queryNode(nodeUuid);
+            rawNodeData = await this.sceneQuery.queryNode(nodeUuid);
         } catch (err: any) {
             return { success: false, error: `Failed to get raw node data for property setting: ${err.message}` };
         }
@@ -1246,7 +1221,7 @@ export class ComponentService implements ComponentCapability {
 
         for (const candidate of candidates) {
             try {
-                const assetInfo: any = await this.driver.queryAssetInfo(candidate);
+                const assetInfo: any = await this.sceneQuery.queryAssetInfo(candidate);
                 if (assetInfo && assetInfo.uuid) {
                     const resolvedUuid = await this.resolveSpriteFrameUuidFromAssetInfo(assetInfo);
                     if (resolvedUuid) {
@@ -1266,7 +1241,7 @@ export class ComponentService implements ComponentCapability {
 
         for (const pattern of searchPatterns) {
             try {
-                const assets: any = await this.driver.queryAssets({ pattern });
+                const assets: any = await this.sceneQuery.queryAssets({ pattern });
                 if (!Array.isArray(assets)) {
                     continue;
                 }
@@ -1366,7 +1341,7 @@ export class ComponentService implements ComponentCapability {
 
         const spriteFrameUuid = `${assetUuid}@f9941`;
         try {
-            const spriteFrameUrl = await this.driver.queryAssetUrl(spriteFrameUuid);
+            const spriteFrameUrl = await this.sceneQuery.queryAssetUrl(spriteFrameUuid);
             if (spriteFrameUrl) {
                 return spriteFrameUuid;
             }
@@ -1414,7 +1389,7 @@ export class ComponentService implements ComponentCapability {
 
     private async collectSceneNodeUuids(): Promise<string[]> {
         try {
-            const tree = await this.driver.queryNodeTree();
+            const tree = await this.sceneQuery.queryNodeTree();
             const nodeUuids = new Set<string>();
 
             const traverse = (node: any) => {
@@ -1459,7 +1434,7 @@ export class ComponentService implements ComponentCapability {
 
             const rawType = component.__type__ || component.cid || component.type || 'Unknown';
             const resolved = this.resolveComponentType(rawType, cidMap);
-            const rawTypeNormalized = this.normalizeComponentType(rawType);
+            const rawTypeNormalized = normalizeComponentType(rawType);
             return expectedAliases.has(rawTypeNormalized) || expectedAliases.has(resolved.type);
         };
 
@@ -1469,7 +1444,7 @@ export class ComponentService implements ComponentCapability {
         }
 
         try {
-            const targetNodeData = await this.driver.queryNode(referenceUuid);
+            const targetNodeData = await this.sceneQuery.queryNode(referenceUuid);
             if (targetNodeData && targetNodeData.__comps__) {
                 for (const comp of targetNodeData.__comps__) {
                     if (!matchesExpected(comp)) {
@@ -1494,7 +1469,7 @@ export class ComponentService implements ComponentCapability {
         const nodeUuids = await this.collectSceneNodeUuids();
         for (const nodeUuid of nodeUuids) {
             try {
-                const nodeData = await this.driver.queryNode(nodeUuid);
+                const nodeData = await this.sceneQuery.queryNode(nodeUuid);
                 if (!nodeData || !nodeData.__comps__) {
                     continue;
                 }
@@ -1525,7 +1500,7 @@ export class ComponentService implements ComponentCapability {
     }
 
     private isGenericComponentType(componentType: string): boolean {
-        const normalized = this.normalizeComponentType(componentType).toLowerCase();
+        const normalized = normalizeComponentType(componentType).toLowerCase();
         return normalized === 'cc.component' || normalized === 'component' || normalized === 'cc.object';
     }
 
@@ -1538,7 +1513,7 @@ export class ComponentService implements ComponentCapability {
         const nodeUuids = await this.collectSceneNodeUuids();
         for (const nodeUuid of nodeUuids) {
             try {
-                const nodeData = await this.driver.queryNode(nodeUuid);
+                const nodeData = await this.sceneQuery.queryNode(nodeUuid);
                 if (!nodeData || !nodeData.__comps__) {
                     continue;
                 }
