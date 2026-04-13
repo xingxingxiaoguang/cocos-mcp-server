@@ -1,11 +1,16 @@
 import { JsonValue } from '../../json';
 
-export type ProjectSettingsCategory = 'general' | 'physics' | 'render' | 'assets' | 'all' | string;
-
 export interface ProjectCapability {
+    // Queries
     queryInfo(): Promise<QueryProjectInfoResult>;
     querySettings(input: QueryProjectSettingsInput): Promise<QueryProjectSettingsResult>;
 }
+
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
+
+export type ProjectSettingsCategory = 'general' | 'physics' | 'render' | 'assets' | 'all' | string;
 
 export interface QueryProjectInfoResult {
     name: string;
@@ -16,13 +21,17 @@ export interface QueryProjectInfoResult {
     config?: JsonValue;
 }
 
-export interface QueryProjectSettingsInput {
-    category?: ProjectSettingsCategory;
-}
-
 export interface QueryProjectSettingsResult {
     category: string;
     config: JsonValue;
     message: string;
     source: string;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
+
+export interface QueryProjectSettingsInput {
+    category?: ProjectSettingsCategory;
 }

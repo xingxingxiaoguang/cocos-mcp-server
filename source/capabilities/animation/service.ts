@@ -1,18 +1,23 @@
-import { JsonValue } from '../../json';
 import {
     AnimationBridgeDriver,
     AnimationClipRefRecord,
 } from '../../editor-bridge/animation/contract';
 import {
     AnimationCapability,
+    AnimationClipInfoResult,
     AnimationClipNodeContextInput,
     AnimationClipSelector,
+    AnimationCreateClipResult,
+    AnimationEditablePropertiesResult,
     AnimationFrameQueryInput,
+    AnimationFrameValueResult,
     AnimationKeyframeInput,
-    AnimationOperationResult,
+    AnimationKeyframeResult,
     AnimationRemoveKeyInput,
+    AnimationSaveResult,
     AnimationSetKeyframeInput,
     AnimationTrackInput,
+    AnimationTrackResult,
     CreateAnimationClipInput,
     ListAnimationClipsResult,
     ResolvedAnimationClipRef,
@@ -35,7 +40,7 @@ export class AnimationService implements AnimationCapability {
         };
     }
 
-    async createClip(input: CreateAnimationClipInput): Promise<AnimationOperationResult> {
+    async createClip(input: CreateAnimationClipInput): Promise<AnimationCreateClipResult> {
         return this.executeSceneMethod('createAnimationClip', [
             input.savePath,
             input.name,
@@ -44,17 +49,17 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async getClipInfo(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult> {
+    async getClipInfo(input: AnimationClipNodeContextInput): Promise<AnimationClipInfoResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('getAnimationClipInfo', [input.nodeUuid, clip.clipUuid]);
     }
 
-    async listEditableProperties(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult> {
+    async listEditableProperties(input: AnimationClipNodeContextInput): Promise<AnimationEditablePropertiesResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('listAnimationEditableProperties', [input.nodeUuid, clip.clipUuid]);
     }
 
-    async addTrack(input: AnimationTrackInput): Promise<AnimationOperationResult> {
+    async addTrack(input: AnimationTrackInput): Promise<AnimationTrackResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('addAnimationTrack', [
             input.nodeUuid,
@@ -64,7 +69,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async removeTrack(input: AnimationTrackInput): Promise<AnimationOperationResult> {
+    async removeTrack(input: AnimationTrackInput): Promise<AnimationTrackResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('removeAnimationTrack', [
             input.nodeUuid,
@@ -74,7 +79,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async createKey(input: AnimationKeyframeInput): Promise<AnimationOperationResult> {
+    async createKey(input: AnimationKeyframeInput): Promise<AnimationKeyframeResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('createAnimationKey', [
             input.nodeUuid,
@@ -86,7 +91,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async setKeyframe(input: AnimationSetKeyframeInput): Promise<AnimationOperationResult> {
+    async setKeyframe(input: AnimationSetKeyframeInput): Promise<AnimationKeyframeResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('setAnimationKeyframe', [
             input.nodeUuid,
@@ -99,7 +104,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async removeKey(input: AnimationRemoveKeyInput): Promise<AnimationOperationResult> {
+    async removeKey(input: AnimationRemoveKeyInput): Promise<AnimationKeyframeResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('removeAnimationKey', [
             input.nodeUuid,
@@ -110,7 +115,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async queryValueAtFrame(input: AnimationFrameQueryInput): Promise<AnimationOperationResult> {
+    async queryValueAtFrame(input: AnimationFrameQueryInput): Promise<AnimationFrameValueResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('queryAnimationValueAtFrame', [
             input.nodeUuid,
@@ -121,7 +126,7 @@ export class AnimationService implements AnimationCapability {
         ]);
     }
 
-    async saveClip(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult> {
+    async saveClip(input: AnimationClipNodeContextInput): Promise<AnimationSaveResult> {
         const clip = await this.resolveClip(input);
         return this.executeSceneMethod('saveAnimationClip', [input.nodeUuid, clip.clipUuid]);
     }
@@ -146,10 +151,10 @@ export class AnimationService implements AnimationCapability {
         return this.mapResolvedClip(resolved);
     }
 
-    private async executeSceneMethod(method: string, args: unknown[]): Promise<AnimationOperationResult> {
+    private async executeSceneMethod(method: string, args: unknown[]): Promise<{ data: unknown; message?: string; warning?: string }> {
         const result = await this.driver.executeSceneMethod(method, args);
         return {
-            data: result.data as JsonValue,
+            data: result.data,
             ...(result.message ? { message: result.message } : {}),
             ...(result.warning ? { warning: result.warning } : {}),
         };

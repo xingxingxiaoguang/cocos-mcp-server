@@ -1,8 +1,11 @@
 export interface SceneCapability {
+    // Queries
     queryInfo(): Promise<SceneInfoResult>;
     queryHierarchy(input?: QuerySceneHierarchyInput): Promise<SceneHierarchyNode>;
     listScenes(): Promise<ListScenesResult>;
     queryStatus(): Promise<SceneStatusResult>;
+
+    // Mutations
     openScene(input: OpenSceneInput): Promise<SceneMutationResult>;
     saveScene(): Promise<SceneMutationResult>;
     saveSceneAs(input: SaveSceneAsInput): Promise<SceneMutationResult>;
@@ -13,14 +16,9 @@ export interface SceneCapability {
     abortSnapshot(): Promise<SceneMutationResult>;
 }
 
-export interface QuerySceneHierarchyInput {
-    includeComponents?: boolean;
-}
-
-export interface SceneComponentSummary {
-    type: string;
-    enabled: boolean;
-}
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
 
 export interface SceneHierarchyNode {
     uuid: string;
@@ -31,18 +29,27 @@ export interface SceneHierarchyNode {
     components?: SceneComponentSummary[];
 }
 
-export interface SceneInfoResult {
-    name: string;
-    uuid: string;
+export interface SceneComponentSummary {
     type: string;
-    active: boolean;
-    nodeCount: number;
+    enabled: boolean;
 }
 
 export interface SceneAssetSummary {
     name: string;
     path: string;
     uuid: string;
+}
+
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
+
+export interface SceneInfoResult {
+    name: string;
+    uuid: string;
+    type: string;
+    active: boolean;
+    nodeCount: number;
 }
 
 export interface ListScenesResult {
@@ -56,18 +63,9 @@ export interface SceneStatusResult {
     message: string;
 }
 
-export interface OpenSceneInput {
-    scenePath: string;
-}
-
-export interface SaveSceneAsInput {
-    path: string;
-}
-
-export interface CreateSceneInput {
-    sceneName: string;
-    savePath: string;
-}
+// ---------------------------------------------------------------------------
+// Mutation results
+// ---------------------------------------------------------------------------
 
 export interface SceneMutationResult {
     message: string;
@@ -82,4 +80,25 @@ export interface CreateSceneResult extends SceneMutationResult {
         sceneVerified: boolean;
     };
     verificationData?: SceneAssetSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
+
+export interface QuerySceneHierarchyInput {
+    includeComponents?: boolean;
+}
+
+export interface OpenSceneInput {
+    scenePath: string;
+}
+
+export interface SaveSceneAsInput {
+    path: string;
+}
+
+export interface CreateSceneInput {
+    sceneName: string;
+    savePath: string;
 }

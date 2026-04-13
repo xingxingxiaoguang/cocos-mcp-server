@@ -1,14 +1,21 @@
 import { JsonValue } from '../../json';
 
-export type PreferencesScope = 'default' | 'global' | 'local';
-
 export interface PreferencesCapability {
+    // Queries
     query(input: QueryPreferencesInput): Promise<QueryPreferencesResult>;
+    export(): Promise<ExportPreferencesResult>;
+
+    // Mutations
     set(input: SetPreferenceInput): Promise<PreferenceMutationResult>;
     reset(input: ResetPreferenceInput): Promise<PreferenceMutationResult>;
     open(input: OpenPreferencesInput): Promise<PreferenceMutationResult>;
-    export(): Promise<ExportPreferencesResult>;
 }
+
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
+
+export type PreferencesScope = 'default' | 'global' | 'local';
 
 export interface PreferencesTarget {
     name: string;
@@ -16,11 +23,9 @@ export interface PreferencesTarget {
     type: PreferencesScope;
 }
 
-export interface QueryPreferencesInput {
-    name?: string;
-    path?: string;
-    type?: PreferencesScope;
-}
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
 
 export interface QuerySinglePreferenceResult {
     mode: 'single';
@@ -36,6 +41,33 @@ export interface QueryAllPreferencesResult {
 
 export type QueryPreferencesResult = QuerySinglePreferenceResult | QueryAllPreferencesResult;
 
+export interface ExportPreferencesResult {
+    preferences: Record<string, JsonValue>;
+    categories: string[];
+    jsonData: string;
+    message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Mutation results
+// ---------------------------------------------------------------------------
+
+export interface PreferenceMutationResult {
+    action: 'set' | 'reset' | 'open';
+    message: string;
+    target?: PreferencesTarget;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
+
+export interface QueryPreferencesInput {
+    name?: string;
+    path?: string;
+    type?: PreferencesScope;
+}
+
 export interface SetPreferenceInput {
     name: string;
     path: string;
@@ -50,17 +82,4 @@ export interface ResetPreferenceInput {
 
 export interface OpenPreferencesInput {
     tab?: string;
-}
-
-export interface PreferenceMutationResult {
-    action: 'set' | 'reset' | 'open';
-    message: string;
-    target?: PreferencesTarget;
-}
-
-export interface ExportPreferencesResult {
-    preferences: Record<string, JsonValue>;
-    categories: string[];
-    jsonData: string;
-    message: string;
 }

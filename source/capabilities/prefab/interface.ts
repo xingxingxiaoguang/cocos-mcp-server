@@ -1,14 +1,19 @@
-import { JsonValue } from '../../json';
-
 export interface PrefabCapability {
+    // Queries
     list(input: ListPrefabsInput): Promise<ListPrefabsResult>;
     query(input: QueryPrefabInput): Promise<PrefabDetailResult>;
-    createFromNode(input: CreatePrefabFromNodeInput): Promise<PrefabOperationResult>;
-    duplicate(input: DuplicatePrefabInput): Promise<PrefabOperationResult>;
-    instantiate(input: InstantiatePrefabInput): Promise<PrefabOperationResult>;
-    apply(input: ApplyPrefabInput): Promise<PrefabOperationResult>;
-    revert(input: RevertPrefabInput): Promise<PrefabOperationResult>;
+
+    // Mutations
+    createFromNode(input: CreatePrefabFromNodeInput): Promise<PrefabCreateFromNodeResult>;
+    duplicate(input: DuplicatePrefabInput): Promise<PrefabDuplicateResult>;
+    instantiate(input: InstantiatePrefabInput): Promise<PrefabInstantiateResult>;
+    apply(input: ApplyPrefabInput): Promise<PrefabApplyResult>;
+    revert(input: RevertPrefabInput): Promise<PrefabRevertResult>;
 }
+
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
 
 export interface PrefabSummary {
     name: string;
@@ -26,15 +31,21 @@ export interface PrefabValidationResult {
     componentCount: number;
 }
 
+export interface Vector3Like {
+    x: number;
+    y: number;
+    z?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
+
 export interface PrefabDetailResult extends PrefabSummary {
     createTime?: string | number;
     modifyTime?: string | number;
     dependencies?: string[];
     validation?: PrefabValidationResult;
-}
-
-export interface ListPrefabsInput {
-    folder?: string;
 }
 
 export interface ListPrefabsResult {
@@ -43,14 +54,52 @@ export interface ListPrefabsResult {
     folder: string;
 }
 
-export interface QueryPrefabInput {
-    prefabPath: string;
+// ---------------------------------------------------------------------------
+// Mutation results
+// ---------------------------------------------------------------------------
+
+export interface PrefabCreateFromNodeResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+    instruction?: string;
 }
 
-export interface Vector3Like {
-    x: number;
-    y: number;
-    z?: number;
+export interface PrefabInstantiateResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+    instruction?: string;
+}
+
+export interface PrefabDuplicateResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+    instruction?: string;
+}
+
+export interface PrefabApplyResult {
+    nodeUuid: string;
+    message: string;
+}
+
+export interface PrefabRevertResult {
+    nodeUuid: string;
+    assetUuid?: string;
+    message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
+
+export interface ListPrefabsInput {
+    folder?: string;
+}
+
+export interface QueryPrefabInput {
+    prefabPath: string;
 }
 
 export interface CreatePrefabFromNodeInput {
@@ -81,12 +130,4 @@ export interface ApplyPrefabInput {
 export interface RevertPrefabInput {
     nodeUuid: string;
     assetUuid?: string;
-}
-
-export interface PrefabOperationResult {
-    data: JsonValue;
-    action?: string;
-    message?: string;
-    warning?: string;
-    instruction?: string;
 }

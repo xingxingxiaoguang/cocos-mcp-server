@@ -21,7 +21,6 @@ import { createCapabilityRegistry } from '../runtime/capability-registry';
 class MockNodeDriver implements NodeBridgeDriver {
     public readonly calls: Array<{ method: string; args: unknown[] }> = [];
 
-    // 低层级 IPC
     async createNode(input: NodeCreateInput): Promise<string> {
         this.calls.push({ method: 'create-node', args: [input] });
         return 'node-created';
@@ -36,7 +35,6 @@ class MockNodeDriver implements NodeBridgeDriver {
     async pasteNode(input: NodePasteInput): Promise<string[]> { this.calls.push({ method: 'paste-node', args: [input] }); return []; }
     async cutNode(uuids: string[]): Promise<string[]> { this.calls.push({ method: 'cut-node', args: uuids }); return uuids; }
 
-    // 查询
     async queryNodeInfo(uuid: string): Promise<NodeInfo> {
         this.calls.push({ method: 'query-node-info', args: [uuid] });
         return {
@@ -49,25 +47,45 @@ class MockNodeDriver implements NodeBridgeDriver {
     async flattenNodes(): Promise<FlattenedNode[]> { return []; }
     async queryNodesByAssetUuid(_assetUuid: string): Promise<string[]> { return []; }
 
-    // 解析
     async resolveParentUuid(parentUuid?: string): Promise<string | undefined> { return parentUuid || 'scene-1'; }
     async resolveAssetUuid(_assetPath: string): Promise<string | null> { return null; }
 
-    // 变换
     normalizeTransformValue(value: TransformInput, type: TransformType, _is2D: boolean): NormalizedTransform {
         return { value: { x: value.x ?? 0, y: value.y ?? 0, z: value.z ?? 0 } };
     }
 
-    // 内联属性
     buildInlineComponentPropertyBatch(_input: InlineComponentPropertyBatchInput): Record<string, unknown> { return {}; }
     async resolveDefaultSpriteFrameUuid(): Promise<string | null> { return null; }
 }
 
 const mockComponentCapability: ComponentCapability = {
-    async query(): Promise<any> { return { success: true, data: [] }; },
-    async add(): Promise<any>   { return { success: true, data: {} }; },
-    async modify(): Promise<any> { return { success: true, data: {} }; },
-    async batchSet(): Promise<any> { return { success: true, data: {} }; },
+    async getComponentDetail(_uuid: string, _componentType: string) {
+        return { type: '', enabled: true, componentType: '' };
+    },
+    async listNodeComponents(_uuid: string) {
+        return { nodeUuid: _uuid, components: [] };
+    },
+    async listAvailableTypes(_category?: string) {
+        return { category: _category || 'all', types: [] };
+    },
+    async listClasses(_extendsClass?: string) {
+        return { classes: [], count: 0, extendsFilter: _extendsClass };
+    },
+    async listSceneComponents() {
+        return { components: [], count: 0 };
+    },
+    async hasScript(_scriptPath: string) {
+        return { className: '', hasScript: false, message: '' };
+    },
+    async add(_input: any) {
+        return { nodeUuid: _input.uuid, componentType: _input.componentType, existing: false, message: 'Component added' };
+    },
+    async modify(_input: any) {
+        return { message: 'Component modified' };
+    },
+    async batchSet(_input: any) {
+        return { nodeUuid: _input.uuid, results: [], failures: [], message: 'Batch set complete' };
+    },
 };
 
 async function main(): Promise<void> {
@@ -88,12 +106,16 @@ async function main(): Promise<void> {
         componentCapability: mockComponentCapability,
     });
 
-    const queried = await registry.node.query({ uuid: 'node-1' });
-    assert.strictEqual(queried.success, true);
-    assert.strictEqual((queried.data as any).uuid, 'node-1');
+    // queryByUuid returns NodeDetail directly (no success wrapper)
+    const queried = await registry.node.queryByUuid('node-1');
+    assert.strictEqual(queried.uuid, 'node-1');
+    assert.strictEqual(queried.nodeType, '2D'); // z=0 => 2D
 
+    // create returns NodeCreateResult directly (no success wrapper)
     const created = await registry.node.create({ name: 'Player' });
-    assert.strictEqual(created.success, true);
+    assert.strictEqual(typeof created.uuid, 'string');
+    assert.strictEqual(created.name, 'Player');
+    assert.strictEqual(typeof created.message, 'string');
 
     assert.ok(nodeDriver.calls.some((call) => call.method === 'create-node'));
     console.log('[node-capability-smoke] OK');

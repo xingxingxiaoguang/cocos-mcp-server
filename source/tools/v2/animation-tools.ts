@@ -1,4 +1,4 @@
-import { AnimationCapability } from '../../capabilities/animation/interface';
+import type { AnimationCapability } from '../../capabilities/animation/interface';
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ToolDefinition, ToolResponse } from '../../mcp/interface';
 import { makeError, ToolErrorCode } from '../../utils/error-codes';

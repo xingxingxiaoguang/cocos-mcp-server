@@ -151,20 +151,24 @@ async function main(): Promise<void> {
         assetDriver: driver,
     });
 
-    const ready = await registry.asset.query({ action: 'db_ready' });
-    assert.strictEqual(ready.success, true);
-    assert.strictEqual((ready.data as any).ready, true);
+    // checkDbReady returns AssetDbStatus directly
+    const ready = await registry.asset.checkDbReady();
+    assert.strictEqual(ready.ready, true);
+    assert.strictEqual(ready.message, 'Asset database is ready');
 
-    const list = await registry.asset.query({ action: 'list', folder: 'db://assets' });
-    assert.strictEqual(list.success, true);
-    assert.strictEqual((list.data as any).assets.length, 1);
+    // list returns AssetListResult directly
+    const list = await registry.asset.list({ folder: 'db://assets' });
+    assert.strictEqual(list.assets.length, 1);
+    assert.strictEqual(list.type, 'all');
 
+    // create returns AssetCreateResult directly
     const created = await registry.asset.create({
         action: 'create',
         targetPath: 'db://assets/tmp/test.txt',
         content: 'hello',
     });
-    assert.strictEqual(created.success, true);
+    assert.strictEqual(created.message, 'File created successfully');
+    assert.strictEqual(created.uuid, 'asset-created');
 
     assert.ok(driver.calls.some((call) => call.method === 'query-ready'));
     assert.ok(driver.calls.some((call) => call.method === 'query-assets'));

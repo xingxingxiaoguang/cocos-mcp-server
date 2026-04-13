@@ -145,12 +145,32 @@ async function main(): Promise<void> {
         componentDriver,
     });
 
-    const listed = await registry.component.query({ uuid: 'node-1' });
-    assert.strictEqual(listed.success, true);
-    assert.strictEqual((listed.data as any).components.length, 1);
+    // Test listNodeComponents (was query({ uuid }))
+    const listed = await registry.component.listNodeComponents('node-1');
+    assert.strictEqual(listed.nodeUuid, 'node-1');
+    assert.strictEqual(listed.components.length, 1);
+    assert.strictEqual(listed.components[0].type, 'cc.Sprite');
 
+    // Test add — existing component returns without error
     const added = await registry.component.add({ uuid: 'node-1', componentType: 'cc.Sprite' });
-    assert.strictEqual(added.success, true);
+    assert.strictEqual(added.existing, true);
+    assert.strictEqual(added.componentType, 'cc.Sprite');
+    assert.ok(added.message.includes('already exists'));
+
+    // Test getComponentDetail
+    const detail = await registry.component.getComponentDetail('node-1', 'cc.Sprite');
+    assert.strictEqual(detail.componentType, 'cc.Sprite');
+    assert.strictEqual(detail.enabled, true);
+
+    // Test listAvailableTypes
+    const available = await registry.component.listAvailableTypes('all');
+    assert.strictEqual(available.category, 'all');
+    assert.ok(available.types.includes('cc.Sprite'));
+
+    // Test hasScript
+    const scriptCheck = await registry.component.hasScript('MyScript');
+    assert.strictEqual(scriptCheck.hasScript, false);
+    assert.strictEqual(scriptCheck.className, 'MyScript');
 
     assert.ok(componentDriver.calls.some((call) => call.method === 'query-node-components'));
     console.log('[component-capability-smoke] OK');

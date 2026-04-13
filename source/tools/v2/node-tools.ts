@@ -363,21 +363,43 @@ export class NodeToolsV2 implements ToolExecutor {
     }
 
     async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'query':
-                return this.node.query(args);
-            case 'create':
-                return this.node.create(args);
-            case 'batch_create':
-                return this.node.batchCreate(args);
-            case 'modify':
-                return this.node.modify(args);
-            case 'delete':
-                return this.node.delete(args.uuids);
-            case 'arrange':
-                return this.node.arrange(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
+        try {
+            switch (toolName) {
+                case 'query': {
+                    if (args?.uuid) return { success: true, data: await this.node.queryByUuid(args.uuid) };
+                    if (args?.pattern) return { success: true, data: await this.node.searchByName(args.pattern) };
+                    if (args?.assetUuid) return { success: true, data: await this.node.queryAssetUsage(args.assetUuid) };
+                    return { success: true, data: await this.node.listAll() };
+                }
+                case 'create': {
+                    const r = await this.node.create(args);
+                    const { message, ...data } = r;
+                    return { success: true, data, message };
+                }
+                case 'batch_create': {
+                    const result = await this.node.batchCreate(args);
+                    return { success: result.failures.length === 0, data: result, message: result.message };
+                }
+                case 'modify': {
+                    const r = await this.node.modify(args);
+                    const { message, warning, ...data } = r;
+                    return { success: true, data, message, warning };
+                }
+                case 'delete': {
+                    const r = await this.node.delete(args.uuids);
+                    const { message, ...data } = r;
+                    return { success: true, data, message };
+                }
+                case 'arrange': {
+                    const r = await this.node.arrange(args);
+                    const { message, ...data } = r;
+                    return { success: true, data, message };
+                }
+                default:
+                    throw new Error(`Unknown tool: ${toolName}`);
+            }
+        } catch (e) {
+            return { success: false, error: (e as Error).message };
         }
     }
 }

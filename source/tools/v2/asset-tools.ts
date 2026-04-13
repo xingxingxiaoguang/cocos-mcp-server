@@ -133,19 +133,33 @@ export class AssetToolsV2 implements ToolExecutor {
     }
 
     async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'query':
-                return this.asset.query(args);
-            case 'create':
-                return this.asset.create(args);
-            case 'modify':
-                return this.asset.modify(args);
-            case 'delete':
-                return this.asset.delete(args);
-            case 'refresh':
-                return this.asset.refresh(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
+        try {
+            switch (toolName) {
+                case 'query': {
+                    if (args?.action === 'db_ready') return this.wrapResult(await this.asset.checkDbReady());
+                    if (args?.action === 'dependencies') return this.wrapResult(await this.asset.getDependencies({ urlOrUuid: args.uuid || args.path, direction: args.direction }));
+                    if (args?.action === 'unused') return this.wrapResult(await this.asset.getUnused({ directory: args.directory, excludeDirectories: args.excludeDirectories }));
+                    if (args?.uuid || args?.path) return this.wrapResult(await this.asset.getInfo({ uuid: args.uuid, path: args.path, includeSubAssets: args.includeSubAssets }));
+                    if (args?.name) return this.wrapResult(await this.asset.searchByName({ name: args.name, exactMatch: args.exactMatch, type: args.type, folder: args.folder, maxResults: args.maxResults }));
+                    return this.wrapResult(await this.asset.list({ type: args?.type, folder: args?.folder }));
+                }
+                case 'create':
+                    return this.wrapResult(await this.asset.create(args));
+                case 'modify':
+                    return this.wrapResult(await this.asset.modify(args));
+                case 'delete':
+                    return this.wrapResult(await this.asset.delete(args));
+                case 'refresh':
+                    return this.wrapResult(await this.asset.refresh(args));
+                default:
+                    throw new Error(`Unknown tool: ${toolName}`);
+            }
+        } catch (e) {
+            return { success: false, error: (e as Error).message };
         }
+    }
+
+    private wrapResult(data: unknown): ToolResponse {
+        return { success: true, data };
     }
 }

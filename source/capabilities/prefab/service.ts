@@ -1,4 +1,3 @@
-import { JsonValue } from '../../json';
 import { safeSerialize } from '../../utils/serializer';
 import { PrefabBridgeDriver } from '../../editor-bridge/prefab/contract';
 import {
@@ -7,10 +6,14 @@ import {
     DuplicatePrefabInput,
     InstantiatePrefabInput,
     PrefabCapability,
+    PrefabCreateFromNodeResult,
+    PrefabInstantiateResult,
+    PrefabDuplicateResult,
+    PrefabApplyResult,
+    PrefabRevertResult,
     PrefabDetailResult,
     ListPrefabsInput,
     ListPrefabsResult,
-    PrefabOperationResult,
     PrefabValidationResult,
     QueryPrefabInput,
     RevertPrefabInput,
@@ -68,7 +71,7 @@ export class PrefabService implements PrefabCapability {
         };
     }
 
-    async createFromNode(input: CreatePrefabFromNodeInput): Promise<PrefabOperationResult> {
+    async createFromNode(input: CreatePrefabFromNodeInput): Promise<PrefabCreateFromNodeResult> {
         const result = await this.driver.createFromNode({
             nodeUuid: input.nodeUuid,
             savePath: input.savePath,
@@ -76,7 +79,6 @@ export class PrefabService implements PrefabCapability {
         });
 
         return {
-            action: 'create_from_node',
             data: this.serialize(result.data),
             message: result.message,
             warning: result.warning,
@@ -84,10 +86,9 @@ export class PrefabService implements PrefabCapability {
         };
     }
 
-    async instantiate(input: InstantiatePrefabInput): Promise<PrefabOperationResult> {
+    async instantiate(input: InstantiatePrefabInput): Promise<PrefabInstantiateResult> {
         const result = await this.driver.instantiate(input);
         return {
-            action: 'instantiate',
             data: this.serialize(result.data),
             message: result.message,
             warning: result.warning,
@@ -95,10 +96,9 @@ export class PrefabService implements PrefabCapability {
         };
     }
 
-    async duplicate(input: DuplicatePrefabInput): Promise<PrefabOperationResult> {
+    async duplicate(input: DuplicatePrefabInput): Promise<PrefabDuplicateResult> {
         const result = await this.driver.duplicate(input);
         return {
-            action: 'duplicate',
             data: this.serialize(result.data),
             message: result.message,
             warning: result.warning,
@@ -106,25 +106,21 @@ export class PrefabService implements PrefabCapability {
         };
     }
 
-    async apply(input: ApplyPrefabInput): Promise<PrefabOperationResult> {
+    async apply(input: ApplyPrefabInput): Promise<PrefabApplyResult> {
         await this.driver.apply(input.nodeUuid);
         return {
-            action: 'apply',
-            data: this.serialize({ nodeUuid: input.nodeUuid }),
+            nodeUuid: input.nodeUuid,
             message: 'Prefab updated successfully',
         };
     }
 
-    async revert(input: RevertPrefabInput): Promise<PrefabOperationResult> {
+    async revert(input: RevertPrefabInput): Promise<PrefabRevertResult> {
         if (input.assetUuid) {
             try {
                 await this.driver.restore(input.nodeUuid, input.assetUuid);
                 return {
-                    action: 'revert',
-                    data: this.serialize({
-                        nodeUuid: input.nodeUuid,
-                        assetUuid: input.assetUuid,
-                    }),
+                    nodeUuid: input.nodeUuid,
+                    assetUuid: input.assetUuid,
                     message: 'Prefab restored successfully',
                 };
             } catch {
@@ -134,11 +130,8 @@ export class PrefabService implements PrefabCapability {
 
         await this.driver.revert(input.nodeUuid);
         return {
-            action: 'revert',
-            data: this.serialize({
-                nodeUuid: input.nodeUuid,
-                ...(input.assetUuid ? { assetUuid: input.assetUuid } : {}),
-            }),
+            nodeUuid: input.nodeUuid,
+            ...(input.assetUuid ? { assetUuid: input.assetUuid } : {}),
             message: 'Prefab instance reverted successfully',
         };
     }
@@ -200,11 +193,11 @@ export class PrefabService implements PrefabCapability {
         };
     }
 
-    private serialize(value: unknown): JsonValue {
+    private serialize(value: unknown): unknown {
         if (value === undefined) {
             return null;
         }
 
-        return safeSerialize(value) as JsonValue;
+        return safeSerialize(value);
     }
 }

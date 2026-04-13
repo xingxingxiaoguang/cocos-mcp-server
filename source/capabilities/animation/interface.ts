@@ -1,28 +1,23 @@
-import { JsonValue } from '../../json';
-
 export interface AnimationCapability {
+    // Queries
     listClips(): Promise<ListAnimationClipsResult>;
-    createClip(input: CreateAnimationClipInput): Promise<AnimationOperationResult>;
-    getClipInfo(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult>;
-    listEditableProperties(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult>;
-    addTrack(input: AnimationTrackInput): Promise<AnimationOperationResult>;
-    removeTrack(input: AnimationTrackInput): Promise<AnimationOperationResult>;
-    createKey(input: AnimationKeyframeInput): Promise<AnimationOperationResult>;
-    setKeyframe(input: AnimationSetKeyframeInput): Promise<AnimationOperationResult>;
-    removeKey(input: AnimationRemoveKeyInput): Promise<AnimationOperationResult>;
-    queryValueAtFrame(input: AnimationFrameQueryInput): Promise<AnimationOperationResult>;
-    saveClip(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult>;
+    getClipInfo(input: AnimationClipNodeContextInput): Promise<AnimationClipInfoResult>;
+    listEditableProperties(input: AnimationClipNodeContextInput): Promise<AnimationEditablePropertiesResult>;
+    queryValueAtFrame(input: AnimationFrameQueryInput): Promise<AnimationFrameValueResult>;
+
+    // Mutations
+    createClip(input: CreateAnimationClipInput): Promise<AnimationCreateClipResult>;
+    addTrack(input: AnimationTrackInput): Promise<AnimationTrackResult>;
+    removeTrack(input: AnimationTrackInput): Promise<AnimationTrackResult>;
+    createKey(input: AnimationKeyframeInput): Promise<AnimationKeyframeResult>;
+    setKeyframe(input: AnimationSetKeyframeInput): Promise<AnimationKeyframeResult>;
+    removeKey(input: AnimationRemoveKeyInput): Promise<AnimationKeyframeResult>;
+    saveClip(input: AnimationClipNodeContextInput): Promise<AnimationSaveResult>;
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// Entities
 // ---------------------------------------------------------------------------
-
-export interface AnimationOperationResult {
-    data: JsonValue;
-    message?: string;
-    warning?: string;
-}
 
 export interface AnimationClipSummary {
     uuid: string;
@@ -39,10 +34,64 @@ export interface ResolvedAnimationClipRef {
     type?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Query results
+// ---------------------------------------------------------------------------
+
 export interface ListAnimationClipsResult {
     animations: AnimationClipSummary[];
     count: number;
 }
+
+export interface AnimationClipInfoResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+export interface AnimationEditablePropertiesResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+export interface AnimationFrameValueResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Mutation results
+// ---------------------------------------------------------------------------
+
+export interface AnimationCreateClipResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+export interface AnimationTrackResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+export interface AnimationKeyframeResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+export interface AnimationSaveResult {
+    data: unknown;
+    message?: string;
+    warning?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Input types
+// ---------------------------------------------------------------------------
 
 export interface CreateAnimationClipInput {
     savePath: string;
