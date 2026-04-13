@@ -26,20 +26,20 @@ export function createCapabilityRegistry(options: CapabilityRegistryOptions = {}
     const profile = options.profile ?? createRuntimeProfile();
     const sceneQueryDriver = options.sceneQueryDriver ?? createSceneQueryDriver(profile);
     const assetDriver = options.assetDriver ?? createAssetDriver(profile);
-    const componentDriver = options.componentDriver ?? createComponentDriver(profile);
-    const nodeDriver = options.nodeDriver ?? createNodeDriver(profile);
+    const componentDriver = options.componentDriver ?? createComponentDriver(profile, sceneQueryDriver);
+    const nodeDriver = options.nodeDriver ?? createNodeDriver(profile, sceneQueryDriver);
     const preferencesDriver = options.preferencesDriver ?? createPreferencesDriver(profile);
     const projectDriver = options.projectDriver ?? createProjectDriver(profile);
     const animationDriver = options.animationDriver ?? createAnimationDriver(profile);
     const prefabDriver = options.prefabDriver ?? createPrefabDriver(profile);
     const sceneDriver = options.sceneDriver ?? createSceneDriver(profile);
-    const componentCapability: ComponentCapability = options.componentCapability ?? new ComponentService(sceneQueryDriver, componentDriver);
+    const componentCapability: ComponentCapability = options.componentCapability ?? new ComponentService(componentDriver);
 
     return {
         profile,
         asset: options.assetCapability ?? new AssetService(assetDriver),
         component: componentCapability,
-        node: options.nodeCapability ?? new NodeService(sceneQueryDriver, nodeDriver, componentCapability),
+        node: options.nodeCapability ?? new NodeService(nodeDriver, componentCapability),
         preferences: options.preferencesCapability ?? new PreferencesService(preferencesDriver),
         project: options.projectCapability ?? new ProjectService(projectDriver),
         animation: options.animationCapability ?? new AnimationService(animationDriver),

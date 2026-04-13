@@ -1,10 +1,21 @@
 import { ToolResponse } from '../../mcp/interface';
 
-export type { ComponentInfo } from '../../editor-bridge/scene-query/contract';
+export interface ComponentCapability {
+    query(input: ComponentQueryInput): Promise<ToolResponse>;
+    add(input: ComponentAddInput): Promise<ToolResponse>;
+    modify(input: ComponentModifyInput): Promise<ToolResponse>;
+    batchSet(input: ComponentBatchSetInput): Promise<ToolResponse>;
+}
 
 // ---------------------------------------------------------------------------
-// ComponentCapability input types
+// Types
 // ---------------------------------------------------------------------------
+
+export interface ComponentInfo {
+    type:        string;
+    enabled:     boolean;
+    properties?: Record<string, unknown>;
+}
 
 export interface ComponentQueryInput {
     uuid?:         string;
@@ -38,14 +49,3 @@ export type ComponentModifyInput =
     | { action: 'remove_array_element'; uuid: string; path: string; index: number }
     | { action: 'reset';  uuid: string; componentType: string }
     | { action: 'call';   uuid: string; component: string; method: string; args?: unknown[] };
-
-// ---------------------------------------------------------------------------
-// ComponentCapability interface
-// ---------------------------------------------------------------------------
-
-export interface ComponentCapability {
-    query(input: ComponentQueryInput): Promise<ToolResponse>;
-    add(input: ComponentAddInput): Promise<ToolResponse>;
-    modify(input: ComponentModifyInput): Promise<ToolResponse>;
-    batchSet(input: ComponentBatchSetInput): Promise<ToolResponse>;
-}

@@ -1,1 +1,1 @@
-export type { ComponentInfo } from '../../../editor-bridge/scene-query/contract';
+export type { ComponentInfo } from '../../../capabilities/component/interface';

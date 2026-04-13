@@ -1,9 +1,7 @@
-import { safeSerialize } from '../../utils/serializer';
 import { JsonValue } from '../../json';
 import {
     AnimationBridgeDriver,
     AnimationClipRefRecord,
-    AnimationSceneMethodResult,
 } from '../../editor-bridge/animation/contract';
 import {
     AnimationCapability,
@@ -150,18 +148,10 @@ export class AnimationService implements AnimationCapability {
 
     private async executeSceneMethod(method: string, args: unknown[]): Promise<AnimationOperationResult> {
         const result = await this.driver.executeSceneMethod(method, args);
-        return this.unwrapSceneResult(method, result);
-    }
-
-    private unwrapSceneResult(method: string, result: AnimationSceneMethodResult): AnimationOperationResult {
-        if (!result.success) {
-            throw new Error(result.error || `Scene method '${method}' failed`);
-        }
-
         return {
-            data: safeSerialize(result.data) as JsonValue,
-            ...(typeof result.warning === 'string' ? { warning: result.warning } : {}),
-            ...(typeof result.message === 'string' ? { message: result.message } : {}),
+            data: result.data as JsonValue,
+            ...(result.message ? { message: result.message } : {}),
+            ...(result.warning ? { warning: result.warning } : {}),
         };
     }
 

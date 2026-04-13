@@ -14,6 +14,16 @@ export interface AnimationCapability {
     saveClip(input: AnimationClipNodeContextInput): Promise<AnimationOperationResult>;
 }
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface AnimationOperationResult {
+    data: JsonValue;
+    message?: string;
+    warning?: string;
+}
+
 export interface AnimationClipSummary {
     uuid: string;
     path: string;
@@ -32,12 +42,6 @@ export interface ResolvedAnimationClipRef {
 export interface ListAnimationClipsResult {
     animations: AnimationClipSummary[];
     count: number;
-}
-
-export interface AnimationOperationResult {
-    data: JsonValue;
-    warning?: string;
-    message?: string;
 }
 
 export interface CreateAnimationClipInput {

@@ -1,3 +1,13 @@
+export interface AnimationBridgeDriver {
+    listClipAssets(): Promise<AnimationAssetRecord[]>;
+    resolveClipRef(input: AnimationClipResolveInput): Promise<AnimationClipRefRecord>;
+    executeSceneMethod(method: string, args: unknown[]): Promise<AnimationSceneMethodResponse>;
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 export interface AnimationAssetRecord {
     uuid: string;
     path: string;
@@ -27,8 +37,8 @@ export interface AnimationClipRefRecord {
     type?: string;
 }
 
-export interface AnimationBridgeDriver {
-    listClipAssets(): Promise<AnimationAssetRecord[]>;
-    resolveClipRef(input: AnimationClipResolveInput): Promise<AnimationClipRefRecord>;
-    executeSceneMethod(method: string, args: unknown[]): Promise<AnimationSceneMethodResult>;
+export interface AnimationSceneMethodResponse {
+    data: unknown;
+    message?: string;
+    warning?: string;
 }

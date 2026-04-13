@@ -1,3 +1,20 @@
+export interface PrefabBridgeDriver {
+    listPrefabAssets(folder: string): Promise<PrefabAssetRecord[]>;
+    queryPrefabAsset(prefabPath: string): Promise<PrefabAssetRecord | null>;
+    queryPrefabMeta(prefabUuid: string): Promise<PrefabMetaRecord | null>;
+    readPrefab(prefabPath: string): Promise<string>;
+    createFromNode(input: PrefabCreateFromNodeRequest): Promise<PrefabMutationResponse>;
+    instantiate(input: PrefabInstantiateRequest): Promise<PrefabMutationResponse>;
+    duplicate(input: PrefabDuplicateRequest): Promise<PrefabMutationResponse>;
+    apply(nodeUuid: string): Promise<void>;
+    restore(nodeUuid: string, assetUuid: string): Promise<void>;
+    revert(nodeUuid: string): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 export interface Vector3Like {
     x: number;
     y: number;
@@ -65,17 +82,4 @@ export interface PrefabLinkInput {
 export interface PrefabLinkResult {
     success: boolean;
     strategy?: string;
-}
-
-export interface PrefabBridgeDriver {
-    listPrefabAssets(folder: string): Promise<PrefabAssetRecord[]>;
-    queryPrefabAsset(prefabPath: string): Promise<PrefabAssetRecord | null>;
-    queryPrefabMeta(prefabUuid: string): Promise<PrefabMetaRecord | null>;
-    readPrefab(prefabPath: string): Promise<string>;
-    createFromNode(input: PrefabCreateFromNodeRequest): Promise<PrefabMutationResponse>;
-    instantiate(input: PrefabInstantiateRequest): Promise<PrefabMutationResponse>;
-    duplicate(input: PrefabDuplicateRequest): Promise<PrefabMutationResponse>;
-    apply(nodeUuid: string): Promise<void>;
-    restore(nodeUuid: string, assetUuid: string): Promise<void>;
-    revert(nodeUuid: string): Promise<void>;
 }

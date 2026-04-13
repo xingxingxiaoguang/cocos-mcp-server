@@ -37,6 +37,19 @@ class MockProjectDriver implements ProjectBridgeDriver {
             render: { pipeline: 'forward' },
         };
     }
+
+    async findBestProjectConfig(_category?: string) {
+        const candidates = await this.readProjectConfigCandidates();
+        return candidates.length > 0 ? candidates[0] : null;
+    }
+
+    extractProjectSettings(projectConfig: unknown, category: string): unknown {
+        if (!projectConfig || typeof projectConfig !== 'object') return null;
+        const config = projectConfig as Record<string, any>;
+        if (category === 'all') return config;
+        if (category === 'general') return config.general ?? config;
+        return config[category] ?? null;
+    }
 }
 
 async function main(): Promise<void> {

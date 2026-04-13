@@ -1,7 +1,15 @@
 import { ToolResponse } from '../../mcp/interface';
 
+export interface AssetCapability {
+    query(input: AssetQueryInput): Promise<ToolResponse>;
+    create(input: AssetCreateInput): Promise<ToolResponse>;
+    modify(input: AssetModifyInput): Promise<ToolResponse>;
+    delete(input: AssetDeleteInput): Promise<ToolResponse>;
+    refresh(input: AssetRefreshInput): Promise<ToolResponse>;
+}
+
 // ---------------------------------------------------------------------------
-// Asset domain types
+// Types
 // ---------------------------------------------------------------------------
 
 export interface AssetInfo {
@@ -16,10 +24,6 @@ export interface AssetInfo {
         importer:  string;
     };
 }
-
-// ---------------------------------------------------------------------------
-// AssetCapability input types
-// ---------------------------------------------------------------------------
 
 export interface AssetQueryInput {
     uuid?:              string;
@@ -65,16 +69,4 @@ export interface AssetRefreshInput {
     directory?:       string;
     format?:          string;
     includeMetadata?: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// AssetCapability interface
-// ---------------------------------------------------------------------------
-
-export interface AssetCapability {
-    query(input: AssetQueryInput): Promise<ToolResponse>;
-    create(input: AssetCreateInput): Promise<ToolResponse>;
-    modify(input: AssetModifyInput): Promise<ToolResponse>;
-    delete(input: AssetDeleteInput): Promise<ToolResponse>;
-    refresh(input: AssetRefreshInput): Promise<ToolResponse>;
 }

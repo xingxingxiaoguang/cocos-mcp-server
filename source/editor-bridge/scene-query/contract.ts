@@ -1,4 +1,31 @@
 // ---------------------------------------------------------------------------
+// SceneQueryDriver — 只读，供 NodeService / ComponentService 共用
+// ---------------------------------------------------------------------------
+
+export interface SceneQueryDriver {
+    // scene channel — 只读查询
+    queryNode(uuid: string): Promise<CocosNodeDump>;
+    queryNodeTree(): Promise<NodeTreeItem | NodeTreeItem[]>;
+    queryCurrentScene(): Promise<NodeTreeItem>;
+    queryNodesByAssetUuid(assetUuid: string): Promise<string[]>;
+    queryComponents(): Promise<ComponentTypeRecord[]>;
+    queryComponentFunctionsOfNode(nodeUuid: string): Promise<ComponentFunctionRecord[]>;
+    executeSceneScript<T = unknown>(method: string, args: unknown[]): Promise<T>;
+
+    // asset-db channel — 只读，node/component 用到的资产查询
+    queryAssetInfo(assetPath: string): Promise<SceneAssetInfo | null>;
+    queryAssets(query: SceneAssetQueryInput): Promise<SceneAssetInfo[]>;
+    queryAssetUrl(uuid: string): Promise<string | null>;
+}
+
+// ---------------------------------------------------------------------------
+// 归一化后的领域类型（定义在 capabilities 层，此处 re-export 供 bridge 内部使用）
+// ---------------------------------------------------------------------------
+
+export type { ComponentInfo } from '../../capabilities/component/interface';
+export type { NodeInfo } from '../../capabilities/node/interface';
+
+// ---------------------------------------------------------------------------
 // Cocos 编辑器原始属性包装格式
 // ---------------------------------------------------------------------------
 
@@ -84,48 +111,4 @@ export interface ComponentFunctionRecord {
     cid:  string;
     name: string;
     [key: string]: unknown;
-}
-
-// ---------------------------------------------------------------------------
-// 归一化后的领域类型（供 capabilities / tools 层使用）
-// ---------------------------------------------------------------------------
-
-export interface ComponentInfo {
-    type:        string;
-    enabled:     boolean;
-    properties?: Record<string, unknown>;
-}
-
-export interface NodeInfo {
-    uuid:         string;
-    name:         string;
-    active:       boolean;
-    position?:    { x: number; y: number; z: number };
-    rotation?:    { x: number; y: number; z: number };
-    scale?:       { x: number; y: number; z: number };
-    parent?:      string | null;
-    children?:    string[];
-    components?:  ComponentInfo[];
-    layer?:       number;
-    mobility?:    number;
-}
-
-// ---------------------------------------------------------------------------
-// SceneQueryDriver — 只读，供 NodeService / ComponentService 共用
-// ---------------------------------------------------------------------------
-
-export interface SceneQueryDriver {
-    // scene channel — 只读查询
-    queryNode(uuid: string): Promise<CocosNodeDump>;
-    queryNodeTree(): Promise<NodeTreeItem | NodeTreeItem[]>;
-    queryCurrentScene(): Promise<NodeTreeItem>;
-    queryNodesByAssetUuid(assetUuid: string): Promise<string[]>;
-    queryComponents(): Promise<ComponentTypeRecord[]>;
-    queryComponentFunctionsOfNode(nodeUuid: string): Promise<ComponentFunctionRecord[]>;
-    executeSceneScript<T = unknown>(method: string, args: unknown[]): Promise<T>;
-
-    // asset-db channel — 只读，node/component 用到的资产查询
-    queryAssetInfo(assetPath: string): Promise<SceneAssetInfo | null>;
-    queryAssets(query: SceneAssetQueryInput): Promise<SceneAssetInfo[]>;
-    queryAssetUrl(uuid: string): Promise<string | null>;
 }

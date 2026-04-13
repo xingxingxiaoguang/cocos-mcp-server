@@ -8,121 +8,65 @@ import {
     AssetRefreshInput,
 } from './interface';
 import { AssetBridgeDriver } from '../../editor-bridge/asset/contract';
-import * as fs from 'fs';
 import * as path from 'path';
 
-/**
- * AssetService — 资源 capability 服务
- */
 export class AssetService implements AssetCapability {
     constructor(private readonly driver: AssetBridgeDriver) {}
-    private static readonly UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-    private static readonly TEXT_REFERENCE_EXTENSIONS = [
-        '.scene', '.prefab', '.anim', '.mtl', '.material', '.json', '.ts', '.js',
-        '.txt', '.xml', '.plist', '.fnt', '.shader', '.effect', '.subgraph',
-        '.graph', '.csv', '.md', '.html', '.css'
-    ];
 
-    async query(input: AssetQueryInput): Promise<ToolResponse> {
-        return this.handleQuery(input);
-    }
-
-    async create(input: AssetCreateInput): Promise<ToolResponse> {
-        return this.handleCreate(input);
-    }
-
-    async modify(input: AssetModifyInput): Promise<ToolResponse> {
-        return this.handleModify(input);
-    }
-
-    async delete(input: AssetDeleteInput): Promise<ToolResponse> {
-        return this.handleDelete(input);
-    }
-
-    async refresh(input: AssetRefreshInput): Promise<ToolResponse> {
-        return this.handleRefresh(input);
-    }
+    async query(input: AssetQueryInput): Promise<ToolResponse> { return this.handleQuery(input); }
+    async create(input: AssetCreateInput): Promise<ToolResponse> { return this.handleCreate(input); }
+    async modify(input: AssetModifyInput): Promise<ToolResponse> { return this.handleModify(input); }
+    async delete(input: AssetDeleteInput): Promise<ToolResponse> { return this.handleDelete(input); }
+    async refresh(input: AssetRefreshInput): Promise<ToolResponse> { return this.handleRefresh(input); }
 
     // ==================== query ====================
 
     private async handleQuery(args: any): Promise<ToolResponse> {
         const { uuid, path: assetPath, name, action } = args;
-
-        // Route by priority
-        if (action === 'db_ready') {
-            return await this.queryAssetDbReady();
-        }
-        if (action === 'dependencies') {
-            return await this.getAssetDependencies(uuid || assetPath, args.direction);
-        }
-        if (action === 'unused') {
-            return await this.getUnusedAssets(args.folder || args.directory, args.excludeDirectories);
-        }
-        if (uuid && (!action || action === 'info')) {
-            return await this.queryByUuid(uuid, args.includeSubAssets);
-        }
-        if (assetPath && (!action || action === 'info')) {
-            return await this.queryByPath(assetPath, args.includeSubAssets);
-        }
-        if (name) {
-            return await this.findByName(name, args);
-        }
-        // Default: list
-        return await this.listAssets(args.type, args.folder);
+        if (action === 'db_ready') return this.queryAssetDbReady();
+        if (action === 'dependencies') return this.getAssetDependencies(uuid || assetPath, args.direction);
+        if (action === 'unused') return this.getUnusedAssets(args.folder || args.directory, args.excludeDirectories);
+        if (uuid && (!action || action === 'info')) return this.queryByUuid(uuid, args.includeSubAssets);
+        if (assetPath && (!action || action === 'info')) return this.queryByPath(assetPath, args.includeSubAssets);
+        if (name) return this.findByName(name, args);
+        return this.listAssets(args.type, args.folder);
     }
 
     private async queryAssetDbReady(): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.queryReady().then((ready: boolean) => {
-                resolve({
-                    success: true,
-                    data: {
-                        ready,
-                        message: ready ? 'Asset database is ready' : 'Asset database is not ready'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            const ready = await this.driver.queryReady();
+            return { success: true, data: { ready, message: ready ? 'Asset database is ready' : 'Asset database is not ready' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async getAssetDependencies(urlOrUUID: string, direction: string = 'dependencies'): Promise<ToolResponse> {
         try {
-            const assetInfo = await this.resolveAssetInfo(urlOrUUID);
-            if (!assetInfo) {
-                return { success: false, error: `Asset ${urlOrUUID} not found` };
-            }
+            const assetInfo = await this.driver.resolveAssetInfo(urlOrUUID);
+            if (!assetInfo) return { success: false, error: `Asset ${urlOrUUID} not found` };
 
             const normalizedDirection = (direction || 'dependencies').toLowerCase();
             if (!['dependencies', 'dependents', 'both'].includes(normalizedDirection)) {
                 return { success: false, error: `Unknown direction: ${direction}` };
             }
 
-            const data: any = {
-                uuid: assetInfo.uuid,
-                name: assetInfo.name,
-                path: assetInfo.url,
-                type: assetInfo.type,
-                direction: normalizedDirection
-            };
+            const data: any = { uuid: assetInfo.uuid, name: assetInfo.name, path: (assetInfo as any).url || assetInfo.path, type: assetInfo.type, direction: normalizedDirection };
 
             if (normalizedDirection === 'dependencies' || normalizedDirection === 'both') {
-                const dependencies = await this.collectAssetDependencies(assetInfo);
+                const dependencies = await this.driver.collectAssetDependencies(assetInfo);
                 data.dependencies = dependencies;
                 data.dependencyCount = dependencies.length;
             }
 
             if (normalizedDirection === 'dependents' || normalizedDirection === 'both') {
-                const dependents = await this.findAssetDependents(assetInfo.uuid, assetInfo.url);
+                const allAssetsResponse = await this.listAssets('all', 'db://assets');
+                const allAssets = allAssetsResponse.success ? (allAssetsResponse.data?.assets as any[] || []) : [];
+                const dependents = await this.driver.findAssetDependents(assetInfo.uuid, (assetInfo as any).url || assetInfo.path, allAssets);
                 data.dependents = dependents;
                 data.dependentCount = dependents.length;
             }
 
             return { success: true, data };
-        } catch (err: any) {
-            return { success: false, error: `Dependency analysis failed: ${err.message}` };
-        }
+        } catch (err: any) { return { success: false, error: `Dependency analysis failed: ${err.message}` }; }
     }
 
     private async getUnusedAssets(directory: string = 'db://assets', excludeDirectories: string[] = []): Promise<ToolResponse> {
@@ -136,7 +80,7 @@ export class AssetService implements AssetCapability {
             }
 
             const allAssets = allAssetsResponse.data.assets as any[];
-            const referencedUuids = await this.collectReferencedUuids(allAssets);
+            const referencedUuids = await this.driver.collectReferencedUuids(allAssets);
 
             const unused = allAssets.filter((asset: any) => {
                 const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
@@ -151,534 +95,113 @@ export class AssetService implements AssetCapability {
                 if (!asset.uuid) return false;
                 if (this.shouldSkipForUnusedCheck(assetUrl, assetType)) return false;
                 return !referencedUuids.has(asset.uuid);
-            }).map((asset: any) => ({
-                name: asset.name,
-                uuid: asset.uuid,
-                path: asset.path || asset.url,
-                type: asset.type
-            }));
+            }).map((asset: any) => ({ name: asset.name, uuid: asset.uuid, path: asset.path || asset.url, type: asset.type }));
 
             return {
                 success: true,
                 data: {
-                    directory: scopeDirectory,
-                    excludeDirectories: Array.from(excludeSet),
-                    totalAssets: allAssets.length,
-                    referencedCount: referencedUuids.size,
-                    unusedCount: unused.length,
-                    unused,
-                    note: 'Basic reference scan across text assets, prefabs and materials. Scripts and scenes are excluded from unused results because scripts are imported and scenes are entry assets.'
-                }
+                    directory: scopeDirectory, excludeDirectories: Array.from(excludeSet),
+                    totalAssets: allAssets.length, referencedCount: referencedUuids.size,
+                    unusedCount: unused.length, unused,
+                    note: 'Basic reference scan across text assets, prefabs and materials. Scripts and scenes are excluded from unused results because scripts are imported and scenes are entry assets.',
+                },
             };
-        } catch (err: any) {
-            return { success: false, error: `Unused asset detection failed: ${err.message}` };
-        }
-    }
-
-    private async resolveAssetInfo(urlOrUUID: string): Promise<any | null> {
-        const input = String(urlOrUUID || '').trim();
-        if (!input) {
-            return null;
-        }
-
-        const candidates = new Set<string>([this.normalizeDbUrl(input)]);
-        if (!input.startsWith('db://')) {
-            try {
-                const resolvedUrl = await this.driver.queryAssetUrl(input);
-                if (resolvedUrl) {
-                    candidates.add(this.normalizeDbUrl(String(resolvedUrl)));
-                }
-            } catch {
-                // ignore and try direct lookup
-            }
-        }
-
-        for (const candidate of candidates) {
-            try {
-                const assetInfo: any = await this.driver.queryAssetInfo(candidate);
-                if (assetInfo) {
-                    const url = this.normalizeDbUrl(assetInfo.url || assetInfo.path || candidate);
-                    return {
-                        ...assetInfo,
-                        url,
-                        path: url,
-                        name: assetInfo.name || path.basename(url),
-                        type: assetInfo.type || 'unknown'
-                    };
-                }
-            } catch {
-                // try next candidate
-            }
-        }
-
-        return null;
-    }
-
-    private async collectAssetDependencies(assetInfo: any): Promise<any[]> {
-        const references = new Set<string>();
-
-        try {
-            const metaInfo = await this.readAssetMeta(assetInfo.uuid, assetInfo.url);
-            this.collectUuidReferences(metaInfo, references, assetInfo.uuid);
-        } catch {
-            // meta lookup is optional
-        }
-
-        const assetUrl = this.normalizeDbUrl(assetInfo.url || assetInfo.path || '');
-        if (this.shouldScanAssetContent(assetUrl)) {
-            const content = await this.readAssetContent(assetUrl);
-            this.collectUuidReferencesFromText(content, references, assetInfo.uuid);
-        }
-
-        const uuids = Array.from(references);
-        const dependencies: any[] = [];
-        for (const dependencyUuid of uuids.slice(0, 100)) {
-            const dependencyInfo = await this.resolveAssetInfo(dependencyUuid);
-            dependencies.push(dependencyInfo ? {
-                uuid: dependencyInfo.uuid,
-                name: dependencyInfo.name,
-                path: dependencyInfo.url,
-                type: dependencyInfo.type
-            } : { uuid: dependencyUuid });
-        }
-
-        if (uuids.length > 100) {
-            dependencies.push({ truncated: true, remaining: uuids.length - 100 });
-        }
-
-        return dependencies;
-    }
-
-    private async findAssetDependents(targetUuid: string, targetUrl: string): Promise<any[]> {
-        const candidatesResponse = await this.listAssets('all', 'db://assets');
-        if (!candidatesResponse.success || !candidatesResponse.data?.assets) {
-            return [];
-        }
-
-        const candidates = candidatesResponse.data.assets as any[];
-        const dependents: any[] = [];
-        for (const asset of candidates) {
-            if (dependents.length >= 100) {
-                break;
-            }
-
-            const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
-            if (!assetUrl || asset.isDirectory || assetUrl === targetUrl) {
-                continue;
-            }
-            if (!this.shouldScanAssetContent(assetUrl)) {
-                continue;
-            }
-
-            const content = await this.readAssetContent(assetUrl);
-            if (!content) {
-                continue;
-            }
-
-            if (content.includes(targetUuid)) {
-                dependents.push({
-                    name: asset.name,
-                    uuid: asset.uuid,
-                    path: assetUrl,
-                    type: asset.type
-                });
-            }
-        }
-
-        return dependents;
-    }
-
-    private async collectReferencedUuids(assets: any[]): Promise<Set<string>> {
-        const referenced = new Set<string>();
-        for (const asset of assets) {
-            if (!asset || asset.isDirectory) {
-                continue;
-            }
-
-            const assetUrl = this.normalizeDbUrl(asset.path || asset.url || '');
-            if (!assetUrl || !this.shouldScanAssetContent(assetUrl)) {
-                continue;
-            }
-
-            const content = await this.readAssetContent(assetUrl);
-            this.collectUuidReferencesFromText(content, referenced, asset.uuid);
-
-            try {
-                const metaInfo = await this.readAssetMeta(asset.uuid, assetUrl);
-                this.collectUuidReferences(metaInfo, referenced, asset.uuid);
-            } catch {
-                // ignore unreadable metadata
-            }
-        }
-        return referenced;
-    }
-
-    private async readAssetMeta(uuid: string, assetUrl: string): Promise<any | null> {
-        try {
-            const metaInfo = await this.driver.queryAssetMeta(uuid);
-            if (metaInfo) {
-                return metaInfo;
-            }
-        } catch {
-            // fallback to disk
-        }
-
-        const metaPath = `${this.dbUrlToFilePath(assetUrl)}.meta`;
-        if (!metaPath || !fs.existsSync(metaPath)) {
-            return null;
-        }
-
-        try {
-            return JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-        } catch {
-            return null;
-        }
-    }
-
-    private async readAssetContent(assetUrl: string): Promise<string | null> {
-        try {
-            const content = await this.driver.readAsset(assetUrl);
-            if (typeof content === 'string') {
-                return content;
-            }
-            if (content === null || content === undefined) {
-                return null;
-            }
-            return JSON.stringify(content);
-        } catch {
-            try {
-                const filePath = this.dbUrlToFilePath(assetUrl);
-                if (filePath && fs.existsSync(filePath)) {
-                    return fs.readFileSync(filePath, 'utf8');
-                }
-            } catch {
-                // ignore
-            }
-            return null;
-        }
-    }
-
-    private collectUuidReferences(value: any, target: Set<string>, excludeUuid?: string, seen: WeakSet<object> = new WeakSet(), depth: number = 0): void {
-        if (value === null || value === undefined || depth > 8) {
-            return;
-        }
-
-        if (typeof value === 'string') {
-            this.collectUuidReferencesFromText(value, target, excludeUuid);
-            return;
-        }
-
-        if (typeof value !== 'object') {
-            return;
-        }
-
-        if (seen.has(value)) {
-            return;
-        }
-        seen.add(value);
-
-        try {
-            if (Array.isArray(value)) {
-                for (const item of value) {
-                    this.collectUuidReferences(item, target, excludeUuid, seen, depth + 1);
-                }
-                return;
-            }
-
-            for (const item of Object.values(value)) {
-                this.collectUuidReferences(item, target, excludeUuid, seen, depth + 1);
-            }
-        } finally {
-            seen.delete(value);
-        }
-    }
-
-    private collectUuidReferencesFromText(text: string | null, target: Set<string>, excludeUuid?: string): void {
-        if (!text) {
-            return;
-        }
-        const matches = text.match(AssetService.UUID_PATTERN) || [];
-        for (const match of matches) {
-            if (excludeUuid && match === excludeUuid) {
-                continue;
-            }
-            target.add(match);
-        }
-    }
-
-    private shouldScanAssetContent(assetUrl: string): boolean {
-        const lowerUrl = assetUrl.toLowerCase();
-        return AssetService.TEXT_REFERENCE_EXTENSIONS.some((ext: string) => lowerUrl.endsWith(ext));
-    }
-
-    private shouldSkipForUnusedCheck(assetUrl: string, assetType: string = ''): boolean {
-        const lowerUrl = assetUrl.toLowerCase();
-        const normalizedType = String(assetType || '').toLowerCase();
-        return lowerUrl.endsWith('.meta')
-            || lowerUrl.endsWith('.ts')
-            || lowerUrl.endsWith('.js')
-            || lowerUrl.endsWith('.scene')
-            || normalizedType.includes('script')
-            || normalizedType.includes('scene');
-    }
-
-    private isAssetWithinDirectory(assetUrl: string, directoryUrl: string): boolean {
-        const normalizedAssetUrl = this.normalizeDbUrl(assetUrl);
-        const normalizedDirectoryUrl = this.normalizeDbUrl(directoryUrl);
-        if (!normalizedAssetUrl || !normalizedDirectoryUrl) {
-            return false;
-        }
-        return normalizedAssetUrl === normalizedDirectoryUrl || normalizedAssetUrl.startsWith(`${normalizedDirectoryUrl}/`);
-    }
-
-    private normalizeDbUrl(value: string): string {
-        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
-        if (!normalized) {
-            return '';
-        }
-        if (normalized.startsWith('db://')) {
-            return normalized;
-        }
-        if (normalized.startsWith('assets/')) {
-            return `db://${normalized}`;
-        }
-        return `db://assets/${normalized.replace(/^\/+/, '')}`;
-    }
-
-    private dbUrlToFilePath(assetUrl: string): string {
-        const normalized = this.normalizeDbUrl(assetUrl);
-        const relativePath = normalized.startsWith('db://') ? normalized.replace('db://', '') : normalized;
-        return path.join(Editor.Project.path, relativePath);
+        } catch (err: any) { return { success: false, error: `Unused asset detection failed: ${err.message}` }; }
     }
 
     private async queryByUuid(uuid: string, includeSubAssets: boolean = true): Promise<ToolResponse> {
         try {
-            // First get url from uuid
             const url = await this.driver.queryAssetUrl(uuid);
-            if (!url) {
-                return { success: false, error: 'Asset not found for given UUID' };
-            }
-            return await this.queryByPath(url, includeSubAssets);
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+            if (!url) return { success: false, error: 'Asset not found for given UUID' };
+            return this.queryByPath(url, includeSubAssets);
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async queryByPath(assetPath: string, includeSubAssets: boolean = true): Promise<ToolResponse> {
         try {
             const assetInfo: any = await this.driver.queryAssetInfo(assetPath);
-            if (!assetInfo) {
-                return { success: false, error: 'Asset not found' };
-            }
+            if (!assetInfo) return { success: false, error: 'Asset not found' };
 
             const info: any = {
-                name: assetInfo.name,
-                uuid: assetInfo.uuid,
-                path: assetInfo.url,
-                type: assetInfo.type,
-                size: assetInfo.size,
-                isDirectory: assetInfo.isDirectory
+                name: assetInfo.name, uuid: assetInfo.uuid, path: assetInfo.url,
+                type: assetInfo.type, size: assetInfo.size, isDirectory: assetInfo.isDirectory,
             };
+            if (assetInfo.meta) info.meta = { ver: assetInfo.meta.ver, importer: assetInfo.meta.importer };
 
-            if (assetInfo.meta) {
-                info.meta = {
-                    ver: assetInfo.meta.ver,
-                    importer: assetInfo.meta.importer
-                };
-            }
-
-            // Sub-assets for image types
             info.subAssets = [];
             if (includeSubAssets && (assetInfo.type === 'cc.ImageAsset' || assetPath.match(/\.(png|jpg|jpeg|gif|tga|bmp|psd)$/i))) {
                 const baseUuid = assetInfo.uuid;
                 const possibleSubAssets = [
                     { type: 'spriteFrame', uuid: `${baseUuid}@f9941`, suffix: '@f9941' },
                     { type: 'texture', uuid: `${baseUuid}@6c48a`, suffix: '@6c48a' },
-                    { type: 'texture2D', uuid: `${baseUuid}@6c48a`, suffix: '@6c48a' }
+                    { type: 'texture2D', uuid: `${baseUuid}@6c48a`, suffix: '@6c48a' },
                 ];
-
                 for (const subAsset of possibleSubAssets) {
                     try {
                         const subAssetUrl = await this.driver.queryAssetUrl(subAsset.uuid);
-                        if (subAssetUrl) {
-                            info.subAssets.push({
-                                type: subAsset.type,
-                                uuid: subAsset.uuid,
-                                url: subAssetUrl,
-                                suffix: subAsset.suffix
-                            });
-                        }
-                    } catch {
-                        // Sub-asset doesn't exist
-                    }
+                        if (subAssetUrl) info.subAssets.push({ type: subAsset.type, uuid: subAsset.uuid, url: subAssetUrl, suffix: subAsset.suffix });
+                    } catch { /* Sub-asset doesn't exist */ }
                 }
             }
 
             return { success: true, data: info };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async findByName(name: string, args: any): Promise<ToolResponse> {
         const { exactMatch = false, type: assetType = 'all', folder = 'db://assets', maxResults = 20 } = args;
         try {
             const allAssetsResponse = await this.listAssets(assetType, folder);
-            if (!allAssetsResponse.success || !allAssetsResponse.data) {
-                return { success: false, error: `Failed to get assets: ${allAssetsResponse.error}` };
-            }
+            if (!allAssetsResponse.success || !allAssetsResponse.data) return { success: false, error: `Failed to get assets: ${allAssetsResponse.error}` };
 
             const allAssets = allAssetsResponse.data.assets as any[];
             const matchedAssets: any[] = [];
-
             for (const asset of allAssets) {
-                const assetName = asset.name;
-                const matches = exactMatch
-                    ? assetName === name
-                    : assetName.toLowerCase().includes(name.toLowerCase());
-
+                const matches = exactMatch ? asset.name === name : asset.name.toLowerCase().includes(name.toLowerCase());
                 if (matches) {
                     try {
                         const detailResponse = await this.queryByPath(asset.path, false);
-                        if (detailResponse.success) {
-                            matchedAssets.push({ ...asset, details: detailResponse.data });
-                        } else {
-                            matchedAssets.push(asset);
-                        }
-                    } catch {
-                        matchedAssets.push(asset);
-                    }
-
+                        matchedAssets.push(detailResponse.success ? { ...asset, details: detailResponse.data } : asset);
+                    } catch { matchedAssets.push(asset); }
                     if (matchedAssets.length >= maxResults) break;
                 }
             }
 
-            return {
-                success: true,
-                data: {
-                    searchTerm: name,
-                    exactMatch,
-                    assetType,
-                    folder,
-                    totalFound: matchedAssets.length,
-                    maxResults,
-                    assets: matchedAssets,
-                    message: `Found ${matchedAssets.length} assets matching '${name}'`
-                }
-            };
-        } catch (error: any) {
-            return { success: false, error: `Asset search failed: ${error.message}` };
-        }
+            return { success: true, data: { searchTerm: name, exactMatch, assetType, folder, totalFound: matchedAssets.length, maxResults, assets: matchedAssets, message: `Found ${matchedAssets.length} assets matching '${name}'` } };
+        } catch (error: any) { return { success: false, error: `Asset search failed: ${error.message}` }; }
     }
 
     private async listAssets(type: string = 'all', folder: string = 'db://assets'): Promise<ToolResponse> {
-        return new Promise((resolve) => {
+        try {
             let pattern = `${folder}/**/*`;
             const normalizedType = this.normalizeAssetTypeKey(type);
 
             if (normalizedType && normalizedType !== 'all') {
                 const typeExtensions: Record<string, string> = {
-                    'scene': '.scene',
-                    'sceneasset': '.scene',
-                    'prefab': '.prefab',
-                    'script': '.{ts,js}',
-                    'texture': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
-                    'imageasset': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
-                    'texture2d': '.{png,jpg,jpeg,gif,tga,bmp,psd}',
-                    'material': '.mtl',
-                    'mesh': '.{fbx,obj,dae}',
-                    'audio': '.{mp3,ogg,wav,m4a}',
-                    'audioclip': '.{mp3,ogg,wav,m4a}',
-                    'animation': '.{anim,clip}',
-                    'animationclip': '.{anim,clip}',
-                    'spriteframe': '.{png,jpg,jpeg}',
-                    'spriteatlas': '.plist',
-                    'font': '.{ttf,fnt,bmfont}'
+                    scene: '.scene', sceneasset: '.scene', prefab: '.prefab', script: '.{ts,js}',
+                    texture: '.{png,jpg,jpeg,gif,tga,bmp,psd}', imageasset: '.{png,jpg,jpeg,gif,tga,bmp,psd}',
+                    texture2d: '.{png,jpg,jpeg,gif,tga,bmp,psd}', material: '.mtl', mesh: '.{fbx,obj,dae}',
+                    audio: '.{mp3,ogg,wav,m4a}', audioclip: '.{mp3,ogg,wav,m4a}',
+                    animation: '.{anim,clip}', animationclip: '.{anim,clip}',
+                    spriteframe: '.{png,jpg,jpeg}', spriteatlas: '.plist', font: '.{ttf,fnt,bmfont}',
                 };
                 const extension = typeExtensions[normalizedType];
-                if (extension) {
-                    pattern = `${folder}/**/*${extension}`;
-                }
+                if (extension) pattern = `${folder}/**/*${extension}`;
             }
 
-            this.driver.queryAssets({ pattern }).then((results: any[]) => {
-                const assets = results.map(asset => ({
-                    name: asset.name,
-                    uuid: asset.uuid,
-                    path: asset.url,
-                    type: asset.type,
-                    size: asset.size || 0,
-                    isDirectory: asset.isDirectory || false
-                }));
+            const results = await this.driver.queryAssets({ pattern });
+            const assets = results.map((asset: any) => ({
+                name: asset.name, uuid: asset.uuid, path: asset.url, type: asset.type,
+                size: asset.size || 0, isDirectory: asset.isDirectory || false,
+            }));
 
-                if (normalizedType && normalizedType !== 'all') {
-                    const filtered = assets.filter(asset => this.matchesAssetType(asset.type, normalizedType));
-                    if (filtered.length > 0) {
-                        resolve({
-                            success: true,
-                            data: {
-                                type: type || 'all',
-                                folder,
-                                count: filtered.length,
-                                assets: filtered
-                            }
-                        });
-                        return;
-                    }
-                }
-
-                resolve({
-                    success: true,
-                    data: {
-                        type: type || 'all',
-                        folder,
-                        count: assets.length,
-                        assets
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
-    }
-
-    private normalizeAssetTypeKey(type: any): string {
-        return String(type ?? '').trim().toLowerCase().replace(/^cc\./, '');
-    }
-
-    private getAssetTypeAliases(type: string): Set<string> {
-        const normalized = this.normalizeAssetTypeKey(type);
-        const aliasGroups: Record<string, string[]> = {
-            scene: ['scene', 'sceneasset'],
-            sceneasset: ['scene', 'sceneasset'],
-            prefab: ['prefab'],
-            script: ['script'],
-            texture: ['texture', 'imageasset', 'texture2d'],
-            imageasset: ['texture', 'imageasset', 'texture2d'],
-            texture2d: ['texture', 'imageasset', 'texture2d'],
-            material: ['material'],
-            mesh: ['mesh'],
-            audio: ['audio', 'audioclip'],
-            audioclip: ['audio', 'audioclip'],
-            animation: ['animation', 'animationclip'],
-            animationclip: ['animation', 'animationclip'],
-            spriteframe: ['spriteframe'],
-            spriteatlas: ['spriteatlas'],
-            font: ['font']
-        };
-
-        return new Set(aliasGroups[normalized] || [normalized]);
-    }
-
-    private matchesAssetType(assetType: string, requestedType: string): boolean {
-        const assetAliases = this.getAssetTypeAliases(assetType);
-        const requestedAliases = this.getAssetTypeAliases(requestedType);
-        for (const alias of requestedAliases) {
-            if (assetAliases.has(alias)) {
-                return true;
+            if (normalizedType && normalizedType !== 'all') {
+                const filtered = assets.filter(asset => this.matchesAssetType(asset.type, normalizedType));
+                if (filtered.length > 0) return { success: true, data: { type: type || 'all', folder, count: filtered.length, assets: filtered } };
             }
-        }
-        return false;
+
+            return { success: true, data: { type: type || 'all', folder, count: assets.length, assets } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     // ==================== create ====================
@@ -686,80 +209,45 @@ export class AssetService implements AssetCapability {
     private async handleCreate(args: any): Promise<ToolResponse> {
         const { action, targetPath } = args;
         switch (action) {
-            case 'create':
-                return await this.createAsset(targetPath, args.content, args.overwrite);
+            case 'create': return this.createAsset(targetPath, args.content, args.overwrite);
             case 'import':
-                if (args.sources) {
-                    return await this.batchImportAssets(args.sources, targetPath, args.overwrite);
-                }
-                return await this.importAsset(args.sourcePath, targetPath);
-            default:
-                return { success: false, error: `Unknown create action: ${action}` };
+                if (args.sources) return this.batchImportAssets(args.sources, targetPath, args.overwrite);
+                return this.importAsset(args.sourcePath, targetPath);
+            default: return { success: false, error: `Unknown create action: ${action}` };
         }
     }
 
     private async createAsset(url: string, content: string | null = null, overwrite: boolean = false): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const options = { overwrite, rename: !overwrite };
-            this.driver.createAsset({ url, content: content ?? '', overwrite: options.overwrite, rename: options.rename }).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result?.uuid,
-                        url: result?.url || url,
-                        message: content === null ? 'Folder created successfully' : 'File created successfully'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            const result = await this.driver.createAsset({ url, content: content ?? '', overwrite, rename: !overwrite });
+            return { success: true, data: { uuid: result?.uuid, url: result?.url || url, message: content === null ? 'Folder created successfully' : 'File created successfully' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async importAsset(sourcePath: string, targetPath: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            if (!fs.existsSync(sourcePath)) {
-                resolve({ success: false, error: 'Source file not found' });
-                return;
-            }
-
-            const fileName = path.basename(sourcePath);
-            const target = targetPath.startsWith('db://') ? targetPath : `db://assets/${targetPath}`;
-
-            this.driver.importAsset({ source: sourcePath, target: `${target}/${fileName}` }).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result.uuid,
-                        path: result.url,
-                        message: `Asset imported: ${fileName}`
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        if (!this.driver.fileExists(sourcePath)) return { success: false, error: 'Source file not found' };
+        const fileName = path.basename(sourcePath);
+        const target = targetPath.startsWith('db://') ? targetPath : `db://assets/${targetPath}`;
+        try {
+            const result = await this.driver.importAsset({ source: sourcePath, target: `${target}/${fileName}` });
+            return { success: true, data: { uuid: result.uuid, path: result.url, message: `Asset imported: ${fileName}` } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
-    private async batchImportAssets(sources: any, targetDirectory: string, overwrite: boolean = false): Promise<ToolResponse> {
+    private async batchImportAssets(sources: any, targetDirectory: string, _overwrite: boolean = false): Promise<ToolResponse> {
         try {
             const { sourceDirectory, fileFilter = [], recursive = false } = sources;
+            if (!this.driver.fileExists(sourceDirectory)) return { success: false, error: 'Source directory does not exist' };
 
-            if (!fs.existsSync(sourceDirectory)) {
-                return { success: false, error: 'Source directory does not exist' };
-            }
-
-            const files = this.getFilesFromDirectory(sourceDirectory, fileFilter, recursive);
+            const files = this.driver.getFilesFromDirectory(sourceDirectory, fileFilter, recursive);
             const importResults: any[] = [];
-            let successCount = 0;
-            let errorCount = 0;
+            let successCount = 0, errorCount = 0;
 
             for (const filePath of files) {
                 try {
                     const fileName = path.basename(filePath);
                     const targetPath = `${targetDirectory}/${fileName}`;
                     const result = await this.driver.importAsset({ source: filePath, target: targetPath });
-
                     importResults.push({ source: filePath, target: targetPath, success: true, uuid: result?.uuid });
                     successCount++;
                 } catch (err: any) {
@@ -768,191 +256,81 @@ export class AssetService implements AssetCapability {
                 }
             }
 
-            return {
-                success: true,
-                data: {
-                    totalFiles: files.length,
-                    successCount,
-                    errorCount,
-                    results: importResults,
-                    message: `Batch import completed: ${successCount} success, ${errorCount} errors`
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
-    }
-
-    private getFilesFromDirectory(dirPath: string, fileFilter: string[], recursive: boolean): string[] {
-        const files: string[] = [];
-        const items = fs.readdirSync(dirPath);
-
-        for (const item of items) {
-            const fullPath = path.join(dirPath, item);
-            const stat = fs.statSync(fullPath);
-
-            if (stat.isFile()) {
-                if (fileFilter.length === 0 || fileFilter.some(ext => item.toLowerCase().endsWith(ext.toLowerCase()))) {
-                    files.push(fullPath);
-                }
-            } else if (stat.isDirectory() && recursive) {
-                files.push(...this.getFilesFromDirectory(fullPath, fileFilter, recursive));
-            }
-        }
-
-        return files;
+            return { success: true, data: { totalFiles: files.length, successCount, errorCount, results: importResults, message: `Batch import completed: ${successCount} success, ${errorCount} errors` } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     // ==================== modify ====================
 
     private async handleModify(args: any): Promise<ToolResponse> {
         switch (args.action) {
-            case 'move':
-                return await this.moveAsset(args.source, args.target, args.overwrite);
-            case 'copy':
-                return await this.copyAsset(args.source, args.target, args.overwrite);
-            case 'save':
-                return await this.saveAsset(args.url, args.content);
-            case 'reimport':
-                return await this.reimportAsset(args.url || args.path);
-            case 'save_meta':
-                return await this.saveAssetMeta(args.uuid || args.url, args.content || JSON.stringify(args.meta));
-            case 'compress':
-                return await this.compressTextures(args.texturePaths, args.format);
-            default:
-                return { success: false, error: `Unknown modify action: ${args.action}` };
+            case 'move': return this.moveAsset(args.source, args.target);
+            case 'copy': return this.copyAsset(args.source, args.target);
+            case 'save': return this.saveAsset(args.url, args.content);
+            case 'reimport': return this.reimportAsset(args.url || args.path);
+            case 'save_meta': return this.saveAssetMeta(args.uuid || args.url, args.content || JSON.stringify(args.meta));
+            case 'compress': return this.compressTextures();
+            default: return { success: false, error: `Unknown modify action: ${args.action}` };
         }
     }
 
-    private async moveAsset(source: string, target: string, overwrite: boolean = false): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const options = { overwrite, rename: !overwrite };
-            this.driver.moveAsset({ source, target }).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result?.uuid,
-                        url: result?.url,
-                        source,
-                        target,
-                        message: 'Asset moved successfully'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+    private async moveAsset(source: string, target: string): Promise<ToolResponse> {
+        try {
+            const result = await this.driver.moveAsset({ source, target });
+            return { success: true, data: { uuid: result?.uuid, url: result?.url, source, target, message: 'Asset moved successfully' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
-    private async copyAsset(source: string, target: string, overwrite: boolean = false): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            const options = { overwrite, rename: !overwrite };
-            this.driver.copyAsset({ source, target }).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result?.uuid,
-                        url: result?.url,
-                        source,
-                        target,
-                        message: 'Asset copied successfully'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+    private async copyAsset(source: string, target: string): Promise<ToolResponse> {
+        try {
+            const result = await this.driver.copyAsset({ source, target });
+            return { success: true, data: { uuid: result?.uuid, url: result?.url, source, target, message: 'Asset copied successfully' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async saveAsset(url: string, content: string): Promise<ToolResponse> {
-        return new Promise((resolve) => {
-            this.driver.saveAsset({ url, content }).then((result: any) => {
-                resolve({
-                    success: true,
-                    data: {
-                        uuid: result?.uuid,
-                        url: result?.url || url,
-                        message: 'Asset saved successfully'
-                    }
-                });
-            }).catch((err: Error) => {
-                resolve({ success: false, error: err.message });
-            });
-        });
+        try {
+            const result = await this.driver.saveAsset({ url, content });
+            return { success: true, data: { uuid: result?.uuid, url: result?.url || url, message: 'Asset saved successfully' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async reimportAsset(url: string): Promise<ToolResponse> {
         try {
             await this.driver.reimportAsset(url);
             return { success: true, data: { url, message: 'Asset reimported successfully' } };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async saveAssetMeta(urlOrUUID: string, content: string): Promise<ToolResponse> {
         try {
             const result = await this.driver.saveAssetMeta({ urlOrUuid: urlOrUUID, content });
-            return {
-                success: true,
-                data: {
-                    uuid: result?.uuid,
-                    url: result?.url,
-                    message: 'Asset meta saved successfully'
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+            return { success: true, data: { uuid: result?.uuid, url: result?.url, message: 'Asset meta saved successfully' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
-    private async compressTextures(texturePaths: string[], format: string): Promise<ToolResponse> {
-        return {
-            success: false,
-            error: 'Texture compression requires image processing capabilities not available in current Cocos Creator MCP implementation. Use the Editor\'s built-in texture compression settings or external tools.'
-        };
+    private async compressTextures(): Promise<ToolResponse> {
+        return { success: false, error: 'Texture compression requires image processing capabilities not available in current Cocos Creator MCP implementation.' };
     }
 
     // ==================== delete ====================
 
     private async handleDelete(args: any): Promise<ToolResponse> {
         const urls = Array.isArray(args.urls) ? args.urls : [args.urls];
-
         if (urls.length === 1) {
             try {
                 await this.driver.deleteAsset(urls[0]);
                 return { success: true, data: { url: urls[0], message: 'Asset deleted successfully' } };
-            } catch (err: any) {
-                return { success: false, error: err.message };
-            }
+            } catch (err: any) { return { success: false, error: err.message }; }
         }
 
-        // Batch delete
         const deleteResults: any[] = [];
-        let successCount = 0;
-        let errorCount = 0;
-
+        let successCount = 0, errorCount = 0;
         for (const url of urls) {
-            try {
-                await this.driver.deleteAsset(url);
-                deleteResults.push({ url, success: true });
-                successCount++;
-            } catch (err: any) {
-                deleteResults.push({ url, success: false, error: err.message });
-                errorCount++;
-            }
+            try { await this.driver.deleteAsset(url); deleteResults.push({ url, success: true }); successCount++; }
+            catch (err: any) { deleteResults.push({ url, success: false, error: err.message }); errorCount++; }
         }
-
-        return {
-            success: true,
-            data: {
-                totalAssets: urls.length,
-                successCount,
-                errorCount,
-                results: deleteResults,
-                message: `Batch delete completed: ${successCount} success, ${errorCount} errors`
-            }
-        };
+        return { success: true, data: { totalAssets: urls.length, successCount, errorCount, results: deleteResults, message: `Batch delete completed: ${successCount} success, ${errorCount} errors` } };
     }
 
     // ==================== refresh ====================
@@ -960,162 +338,116 @@ export class AssetService implements AssetCapability {
     private async handleRefresh(args: any): Promise<ToolResponse> {
         const action = args.action || 'refresh';
         switch (action) {
-            case 'refresh':
-                return await this.refreshAssets(args.path || args.directory);
-            case 'generate_url':
-                return await this.generateAvailableUrl(args.path || args.url);
-            case 'open_external':
-                return await this.openAssetExternal(args.uuid || args.path);
-            case 'export_manifest':
-                return await this.exportAssetManifest(args.directory, args.format, args.includeMetadata);
-            case 'validate_refs':
-                return await this.validateAssetReferences(args.directory);
-            default:
-                return { success: false, error: `Unknown refresh action: ${action}` };
+            case 'refresh': return this.refreshAssets(args.path || args.directory);
+            case 'generate_url': return this.generateAvailableUrl(args.path || args.url);
+            case 'open_external': return this.openAssetExternal(args.uuid || args.path);
+            case 'export_manifest': return this.exportAssetManifest(args.directory, args.format, args.includeMetadata);
+            case 'validate_refs': return this.validateAssetReferences(args.directory);
+            default: return { success: false, error: `Unknown refresh action: ${action}` };
         }
     }
 
     private async refreshAssets(folder?: string): Promise<ToolResponse> {
-        try {
-            const targetPath = folder || 'db://assets';
-            await this.driver.refreshAsset(targetPath);
-            return { success: true, message: `Assets refreshed in: ${targetPath}` };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        try { await this.driver.refreshAsset(folder || 'db://assets'); return { success: true, message: `Assets refreshed in: ${folder || 'db://assets'}` }; }
+        catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async generateAvailableUrl(url: string): Promise<ToolResponse> {
         try {
             const availableUrl = await this.driver.generateAvailableUrl(url);
-            return {
-                success: true,
-                data: {
-                    originalUrl: url,
-                    availableUrl,
-                    message: availableUrl === url ? 'URL is available' : 'Generated new available URL'
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+            return { success: true, data: { originalUrl: url, availableUrl, message: availableUrl === url ? 'URL is available' : 'Generated new available URL' } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async openAssetExternal(urlOrUUID: string): Promise<ToolResponse> {
-        try {
-            await this.driver.openAsset(urlOrUUID);
-            return { success: true, message: 'Asset opened with external program' };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+        try { await this.driver.openAsset(urlOrUUID); return { success: true, message: 'Asset opened with external program' }; }
+        catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async exportAssetManifest(directory: string = 'db://assets', format: string = 'json', includeMetadata: boolean = true): Promise<ToolResponse> {
         try {
             const assets = await this.driver.queryAssets({ pattern: `${directory}/**/*` });
             const manifest: any[] = [];
-
             for (const asset of assets) {
-                const manifestEntry: any = {
-                    name: asset.name,
-                    url: asset.url,
-                    uuid: asset.uuid,
-                    type: asset.type,
-                    size: asset.size || 0,
-                    isDirectory: asset.isDirectory || false
-                };
-
+                const entry: any = { name: asset.name, url: (asset as any).url, uuid: asset.uuid, type: asset.type, size: asset.size || 0, isDirectory: (asset as any).isDirectory || false };
                 if (includeMetadata) {
-                    try {
-                        const assetInfo = await this.driver.queryAssetInfo(asset.url ?? asset.path);
-                        if (assetInfo && (assetInfo as any).meta) {
-                            manifestEntry.meta = (assetInfo as any).meta;
-                        }
-                    } catch {
-                        // Skip metadata if not available
-                    }
+                    try { const info = await this.driver.queryAssetInfo((asset as any).url ?? asset.path); if (info && (info as any).meta) entry.meta = (info as any).meta; }
+                    catch { /* skip */ }
                 }
-
-                manifest.push(manifestEntry);
+                manifest.push(entry);
             }
 
             let exportData: string;
             switch (format) {
-                case 'csv':
-                    exportData = this.convertToCSV(manifest);
-                    break;
-                case 'xml':
-                    exportData = this.convertToXML(manifest);
-                    break;
-                default:
-                    exportData = JSON.stringify(manifest, null, 2);
+                case 'csv': exportData = this.convertToCSV(manifest); break;
+                case 'xml': exportData = this.convertToXML(manifest); break;
+                default: exportData = JSON.stringify(manifest, null, 2);
             }
 
-            return {
-                success: true,
-                data: {
-                    directory,
-                    format,
-                    assetCount: manifest.length,
-                    includeMetadata,
-                    manifest: exportData,
-                    message: `Asset manifest exported with ${manifest.length} assets`
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+            return { success: true, data: { directory, format, assetCount: manifest.length, includeMetadata, manifest: exportData, message: `Asset manifest exported with ${manifest.length} assets` } };
+        } catch (err: any) { return { success: false, error: err.message }; }
     }
 
     private async validateAssetReferences(directory: string = 'db://assets'): Promise<ToolResponse> {
         try {
             const assets = await this.driver.queryAssets({ pattern: `${directory}/**/*` });
             const brokenReferences: any[] = [];
-            const validCount = { value: 0 };
-
+            let validCount = 0;
             for (const asset of assets) {
-                try {
-                    const assetInfo = await this.driver.queryAssetInfo(asset.url ?? asset.path);
-                    if (assetInfo) {
-                        validCount.value++;
-                    }
-                } catch (err) {
-                    brokenReferences.push({
-                        url: asset.url,
-                        uuid: asset.uuid,
-                        name: asset.name,
-                        error: (err as Error).message
-                    });
-                }
+                try { const info = await this.driver.queryAssetInfo((asset as any).url ?? asset.path); if (info) validCount++; }
+                catch (err) { brokenReferences.push({ url: (asset as any).url, uuid: asset.uuid, name: asset.name, error: (err as Error).message }); }
             }
+            return { success: true, data: { directory, totalAssets: assets.length, validReferences: validCount, brokenReferences: brokenReferences.length, brokenAssets: brokenReferences, message: `Validation completed: ${brokenReferences.length} broken references found` } };
+        } catch (err: any) { return { success: false, error: err.message }; }
+    }
 
-            return {
-                success: true,
-                data: {
-                    directory,
-                    totalAssets: assets.length,
-                    validReferences: validCount.value,
-                    brokenReferences: brokenReferences.length,
-                    brokenAssets: brokenReferences,
-                    message: `Validation completed: ${brokenReferences.length} broken references found`
-                }
-            };
-        } catch (err: any) {
-            return { success: false, error: err.message };
-        }
+    // ==================== utility ====================
+
+    private normalizeDbUrl(value: string): string {
+        const normalized = String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+        if (!normalized) return '';
+        if (normalized.startsWith('db://')) return normalized;
+        if (normalized.startsWith('assets/')) return `db://${normalized}`;
+        return `db://assets/${normalized.replace(/^\/+/, '')}`;
+    }
+
+    private isAssetWithinDirectory(assetUrl: string, directoryUrl: string): boolean {
+        const a = this.normalizeDbUrl(assetUrl), d = this.normalizeDbUrl(directoryUrl);
+        if (!a || !d) return false;
+        return a === d || a.startsWith(`${d}/`);
+    }
+
+    private shouldSkipForUnusedCheck(assetUrl: string, assetType: string = ''): boolean {
+        const lowerUrl = assetUrl.toLowerCase();
+        const nt = String(assetType || '').toLowerCase();
+        return lowerUrl.endsWith('.meta') || lowerUrl.endsWith('.ts') || lowerUrl.endsWith('.js') || lowerUrl.endsWith('.scene') || nt.includes('script') || nt.includes('scene');
+    }
+
+    private normalizeAssetTypeKey(type: any): string { return String(type ?? '').trim().toLowerCase().replace(/^cc\./, ''); }
+
+    private getAssetTypeAliases(type: string): Set<string> {
+        const normalized = this.normalizeAssetTypeKey(type);
+        const aliasGroups: Record<string, string[]> = {
+            scene: ['scene', 'sceneasset'], sceneasset: ['scene', 'sceneasset'], prefab: ['prefab'], script: ['script'],
+            texture: ['texture', 'imageasset', 'texture2d'], imageasset: ['texture', 'imageasset', 'texture2d'], texture2d: ['texture', 'imageasset', 'texture2d'],
+            material: ['material'], mesh: ['mesh'], audio: ['audio', 'audioclip'], audioclip: ['audio', 'audioclip'],
+            animation: ['animation', 'animationclip'], animationclip: ['animation', 'animationclip'],
+            spriteframe: ['spriteframe'], spriteatlas: ['spriteatlas'], font: ['font'],
+        };
+        return new Set(aliasGroups[normalized] || [normalized]);
+    }
+
+    private matchesAssetType(assetType: string, requestedType: string): boolean {
+        const a = this.getAssetTypeAliases(assetType), r = this.getAssetTypeAliases(requestedType);
+        for (const alias of r) { if (a.has(alias)) return true; }
+        return false;
     }
 
     private convertToCSV(data: any[]): string {
         if (data.length === 0) return '';
         const headers = Object.keys(data[0]);
         const csvRows = [headers.join(',')];
-        for (const row of data) {
-            const values = headers.map(header => {
-                const value = row[header];
-                return typeof value === 'object' ? JSON.stringify(value) : String(value);
-            });
-            csvRows.push(values.join(','));
-        }
+        for (const row of data) csvRows.push(headers.map(h => typeof row[h] === 'object' ? JSON.stringify(row[h]) : String(row[h])).join(','));
         return csvRows.join('\n');
     }
 
@@ -1123,15 +455,9 @@ export class AssetService implements AssetCapability {
         let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<assets>\n';
         for (const item of data) {
             xml += '  <asset>\n';
-            for (const [key, value] of Object.entries(item)) {
-                const xmlValue = typeof value === 'object'
-                    ? JSON.stringify(value)
-                    : String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                xml += `    <${key}>${xmlValue}</${key}>\n`;
-            }
+            for (const [key, value] of Object.entries(item)) xml += `    <${key}>${typeof value === 'object' ? JSON.stringify(value) : String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</${key}>\n`;
             xml += '  </asset>\n';
         }
-        xml += '</assets>';
-        return xml;
+        return xml + '</assets>';
     }
 }

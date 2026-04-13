@@ -1,10 +1,11 @@
 import { RuntimeProfile } from '../../runtime/profile';
+import { safeSerialize } from '../../utils/serializer';
 import {
     AnimationAssetRecord,
     AnimationBridgeDriver,
     AnimationClipRefRecord,
     AnimationClipResolveInput,
-    AnimationSceneMethodResult,
+    AnimationSceneMethodResponse,
 } from './contract';
 
 const ASSET_DB_CHANNEL = 'asset-db';
@@ -76,7 +77,7 @@ class EditorAnimationDriver implements AnimationBridgeDriver {
         };
     }
 
-    async executeSceneMethod(method: string, args: unknown[]): Promise<AnimationSceneMethodResult> {
+    async executeSceneMethod(method: string, args: unknown[]): Promise<AnimationSceneMethodResponse> {
         this.ensureSceneSupport();
         const request = this.getRequest();
         const result = await request(SCENE_CHANNEL, 'execute-scene-script', {
@@ -86,27 +87,22 @@ class EditorAnimationDriver implements AnimationBridgeDriver {
         });
 
         if (result === undefined || result === null) {
-            return {
-                success: false,
-                error: `Scene method '${method}' returned nothing. Check package.json contributions.scene.methods.`,
-            };
+            throw new Error(`Scene method '${method}' returned nothing. Check package.json contributions.scene.methods.`);
         }
 
         if (typeof result === 'object' && result && 'success' in (result as Record<string, unknown>)) {
             const sceneResult = result as Record<string, unknown>;
+            if (!sceneResult.success) {
+                throw new Error(typeof sceneResult.error === 'string' ? sceneResult.error : `Scene method '${method}' failed`);
+            }
             return {
-                success: Boolean(sceneResult.success),
-                data: sceneResult.data,
-                message: typeof sceneResult.message === 'string' ? sceneResult.message : undefined,
-                warning: typeof sceneResult.warning === 'string' ? sceneResult.warning : undefined,
-                error: typeof sceneResult.error === 'string' ? sceneResult.error : undefined,
+                data: safeSerialize(sceneResult.data),
+                ...(typeof sceneResult.warning === 'string' ? { warning: sceneResult.warning } : {}),
+                ...(typeof sceneResult.message === 'string' ? { message: sceneResult.message } : {}),
             };
         }
 
-        return {
-            success: true,
-            data: result,
-        };
+        return { data: safeSerialize(result) };
     }
 
     private ensureSceneSupport(): void {

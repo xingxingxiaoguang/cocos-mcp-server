@@ -3,6 +3,7 @@ import {
     AssetBridgeDriver,
     AssetCopyInput,
     AssetCreateInput,
+    AssetDependencyItem,
     AssetImportInput,
     AssetMetadata,
     AssetMoveInput,
@@ -109,6 +110,19 @@ class MockAssetDriver implements AssetBridgeDriver {
     async openAsset(urlOrUuid: string): Promise<void> {
         this.calls.push({ method: 'open-asset', args: [urlOrUuid] });
     }
+
+    // 新增合约方法
+    async resolveAssetInfo(urlOrUUID: string): Promise<AssetMetadata | null> {
+        return this.queryAssetInfo(urlOrUUID);
+    }
+
+    async collectAssetDependencies(_assetInfo: AssetMetadata): Promise<AssetDependencyItem[]> { return []; }
+    async findAssetDependents(_targetUuid: string, _targetUrl: string, _allAssets: AssetMetadata[]): Promise<AssetDependencyItem[]> { return []; }
+    async collectReferencedUuids(_assets: AssetMetadata[]): Promise<Set<string>> { return new Set(); }
+    async readAssetMeta(_uuid: string, _assetUrl: string): Promise<Record<string, unknown> | null> { return null; }
+    async readAssetContent(_assetUrl: string): Promise<string | null> { return null; }
+    getFilesFromDirectory(_dirPath: string, _fileFilter: string[], _recursive: boolean): string[] { return []; }
+    fileExists(_filePath: string): boolean { return false; }
 }
 
 async function main(): Promise<void> {

@@ -6,37 +6,19 @@ import { createCapabilityRegistry } from '../runtime/capability-registry';
 class MockSceneDriver implements SceneBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];
 
-    async queryNodeTree(): Promise<unknown> {
-        this.calls.push({ method: 'queryNodeTree', args: [] });
-        return {
-            uuid: 'scene-uuid',
-            name: 'MainScene',
-            type: 'cc.Scene',
-            active: true,
-            __comps__: [],
-            children: [
-                {
-                    uuid: 'node-1',
-                    name: 'Canvas',
-                    type: 'cc.Node',
-                    active: true,
-                    __comps__: [
-                        {
-                            __type__: 'cc.UITransform',
-                            enabled: { value: true },
-                        },
-                    ],
-                    children: [],
-                },
-            ],
-        };
+    async querySceneInfo() {
+        this.calls.push({ method: 'querySceneInfo', args: [] });
+        return { name: 'MainScene', uuid: 'scene-uuid', type: 'cc.Scene', active: true, nodeCount: 1 };
     }
 
-    async executeSceneMethod(method: string, args: unknown[]) {
-        this.calls.push({ method: 'executeSceneMethod', args: [method, args] });
+    async querySceneHierarchy(includeComponents: boolean) {
+        this.calls.push({ method: 'querySceneHierarchy', args: [includeComponents] });
         return {
-            success: true,
-            data: [],
+            uuid: 'scene-uuid', name: 'MainScene', type: 'cc.Scene', active: true,
+            children: [{
+                uuid: 'node-1', name: 'Canvas', type: 'cc.Node', active: true, children: [],
+                ...(includeComponents ? { components: [{ type: 'cc.UITransform', enabled: true }] } : {}),
+            }],
         };
     }
 

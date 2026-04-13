@@ -1,1 +1,1 @@
-export type { NodeInfo } from '../../../editor-bridge/scene-query/contract';
+export type { NodeInfo } from '../../../capabilities/node/interface';

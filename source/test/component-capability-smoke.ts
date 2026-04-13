@@ -1,77 +1,31 @@
 import * as assert from 'assert';
 import {
+    ApplyPropertyInput,
+    ApplyPropertyResult,
+    AvailableComponentsResult,
     ComponentBridgeDriver,
     ComponentCreateInput,
     ComponentCreateResult,
+    ComponentDetailResult,
+    ComponentHasScriptResult,
     ComponentMethodInput,
+    ComponentQueryResult,
     ComponentResetInput,
     ComponentSetPropertyInput,
+    NormalizedComponent,
+    PropertyVerificationResult,
     RemoveArrayElementInput,
+    SceneClassesResult,
+    SceneComponentsResult,
+    SpriteStateResult,
 } from '../editor-bridge/component/contract';
-import {
-    CocosNodeDump,
-    ComponentFunctionRecord,
-    ComponentTypeRecord,
-    NodeTreeItem,
-    SceneAssetInfo,
-    SceneAssetQueryInput,
-    SceneQueryDriver,
-} from '../editor-bridge/scene-query/contract';
 import { RuntimeProfile } from '../runtime/profile';
 import { createCapabilityRegistry } from '../runtime/capability-registry';
-
-class MockSceneQueryDriver implements SceneQueryDriver {
-    public readonly calls: Array<{ method: string; args: unknown[] }> = [];
-
-    async queryNode(uuid: string): Promise<CocosNodeDump> {
-        this.calls.push({ method: 'query-node', args: [uuid] });
-        return {
-            uuid:     { value: uuid },
-            name:     { value: 'TestNode' },
-            active:   { value: true },
-            position: { value: { x: 0, y: 0, z: 0 } },
-            rotation: { value: { x: 0, y: 0, z: 0 } },
-            scale:    { value: { x: 1, y: 1, z: 1 } },
-            parent:   { value: null },
-            children: [],
-            __comps__: [
-                { __type__: 'cc.Sprite', enabled: { value: true }, uuid: { value: 'comp-1' } },
-            ],
-        };
-    }
-
-    async queryNodeTree(): Promise<NodeTreeItem | NodeTreeItem[]> {
-        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
-    }
-
-    async queryCurrentScene(): Promise<NodeTreeItem> {
-        return { uuid: 'scene-1', name: 'Scene', active: true, children: [] };
-    }
-
-    async queryNodesByAssetUuid(_assetUuid: string): Promise<string[]> { return []; }
-
-    async queryComponents(): Promise<ComponentTypeRecord[]> {
-        this.calls.push({ method: 'query-components', args: [] });
-        return [
-            { cid: 'cc.Sprite', name: 'cc.Sprite' },
-            { cid: 'cc.Label',  name: 'cc.Label' },
-        ];
-    }
-
-    async queryComponentFunctionsOfNode(nodeUuid: string): Promise<ComponentFunctionRecord[]> {
-        this.calls.push({ method: 'query-component-function-of-node', args: [nodeUuid] });
-        return [];
-    }
-
-    async executeSceneScript<T = unknown>(_method: string, _args: unknown[]): Promise<T> { return {} as T; }
-    async queryAssetInfo(_assetPath: string): Promise<SceneAssetInfo | null> { return null; }
-    async queryAssets(_query: SceneAssetQueryInput): Promise<SceneAssetInfo[]> { return []; }
-    async queryAssetUrl(_uuid: string): Promise<string | null> { return null; }
-}
 
 class MockComponentDriver implements ComponentBridgeDriver {
     public readonly calls: Array<{ method: string; args: unknown[] }> = [];
 
+    // 低层级 IPC
     async createComponent(input: ComponentCreateInput): Promise<ComponentCreateResult> {
         this.calls.push({ method: 'create-component', args: [input] });
         return { uuid: 'comp-created', componentType: input.component };
@@ -92,6 +46,76 @@ class MockComponentDriver implements ComponentBridgeDriver {
 
     async setProperty(input: ComponentSetPropertyInput): Promise<void> {
         this.calls.push({ method: 'set-property', args: [input] });
+    }
+
+    // 查询操作
+    async queryNodeComponents(nodeUuid: string): Promise<ComponentQueryResult> {
+        this.calls.push({ method: 'query-node-components', args: [nodeUuid] });
+        return {
+            nodeUuid,
+            components: [
+                { type: 'cc.Sprite', cid: 'cc.Sprite', uuid: 'comp-1', enabled: true, properties: {} },
+            ],
+        };
+    }
+
+    async queryComponentInfo(nodeUuid: string, componentType: string): Promise<ComponentDetailResult | null> {
+        this.calls.push({ method: 'query-component-info', args: [nodeUuid, componentType] });
+        return { nodeUuid, type: componentType, uuid: 'comp-1', enabled: true, properties: {} };
+    }
+
+    async queryAvailableComponents(category: string): Promise<AvailableComponentsResult> {
+        return { category, components: ['cc.Sprite', 'cc.Label'] };
+    }
+
+    async querySceneClasses(_extendsClass?: string): Promise<SceneClassesResult> {
+        return { classes: [], count: 0 };
+    }
+
+    async querySceneComponents(): Promise<SceneComponentsResult> {
+        return { components: [], count: 0 };
+    }
+
+    async queryComponentHasScript(className: string): Promise<ComponentHasScriptResult> {
+        return { className, hasScript: false, message: `Component '${className}' does not have script` };
+    }
+
+    // 属性操作
+    async applyComponentProperty(input: ApplyPropertyInput): Promise<ApplyPropertyResult> {
+        this.calls.push({ method: 'apply-component-property', args: [input] });
+        return {
+            success: true,
+            message: `Set ${input.componentType}.${input.property}`,
+            data: {
+                nodeUuid: input.nodeUuid,
+                componentType: input.componentType,
+                property: input.property,
+                changeVerified: true,
+            },
+        };
+    }
+
+    async ensureDefaultSpriteState(_nodeUuid: string): Promise<SpriteStateResult> {
+        return {};
+    }
+
+    async verifyPropertyChange(
+        _nodeUuid: string, _componentType: string, _property: string, _originalValue: unknown, _expectedValue: unknown,
+    ): Promise<PropertyVerificationResult> {
+        return { verified: true, actualValue: undefined, fullData: null };
+    }
+
+    // 组件匹配工具
+    isComponentOnNode(components: NormalizedComponent[], componentType: string): NormalizedComponent | undefined {
+        return components.find(c => c.type === componentType || c.cid === componentType);
+    }
+
+    countComponentOnNode(components: NormalizedComponent[], componentType: string): number {
+        return components.filter(c => c.type === componentType || c.cid === componentType).length;
+    }
+
+    generateComponentSuggestion(_requestedType: string, _availableTypes: string[], _property: string): string {
+        return '';
     }
 }
 
@@ -115,11 +139,9 @@ async function main(): Promise<void> {
         },
     };
 
-    const sceneQueryDriver = new MockSceneQueryDriver();
     const componentDriver = new MockComponentDriver();
     const registry = createCapabilityRegistry({
         profile,
-        sceneQueryDriver,
         componentDriver,
     });
 
@@ -130,8 +152,7 @@ async function main(): Promise<void> {
     const added = await registry.component.add({ uuid: 'node-1', componentType: 'cc.Sprite' });
     assert.strictEqual(added.success, true);
 
-    assert.ok(sceneQueryDriver.calls.some((call) => call.method === 'query-node'));
-    assert.ok(componentDriver.calls.some((call) => call.method === 'create-component'));
+    assert.ok(componentDriver.calls.some((call) => call.method === 'query-node-components'));
     console.log('[component-capability-smoke] OK');
 }
 
