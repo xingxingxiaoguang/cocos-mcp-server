@@ -1,5 +1,5 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
 import type { ComponentCapability } from '../../capabilities/component/interface';
 
 export class ComponentToolsV2 implements ToolExecutor {

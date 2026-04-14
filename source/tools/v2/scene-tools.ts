@@ -1,7 +1,5 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolResponse } from '../../mcp/interface';
-import { makeError, ToolErrorCode } from '../../utils/error-codes';
-import { BaseToolExecutor, ToolHandler } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse, makeError, ToolErrorCode } from '../base-tool';
 
 export class SceneToolsV2 extends BaseToolExecutor {
     private readonly scene = getCapabilityRegistry().scene;

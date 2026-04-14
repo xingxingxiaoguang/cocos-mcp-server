@@ -1,6 +1,8 @@
 import { ToolDefinition, ToolExecutor, ToolResponse } from '../mcp/interface';
 import { makeError, normalizeUnknownError, ToolErrorCode } from '../utils/error-codes';
 
+export { ToolDefinition, ToolExecutor, ToolResponse, makeError, normalizeUnknownError, ToolErrorCode };
+
 export type ToolHandler = (args: any) => Promise<ToolResponse>;
 
 export abstract class BaseToolExecutor implements ToolExecutor {

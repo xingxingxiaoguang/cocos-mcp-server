@@ -1,5 +1,5 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
 import type { PrefabCapability } from '../../capabilities/prefab/interface';
 
 export class PrefabToolsV2 implements ToolExecutor {

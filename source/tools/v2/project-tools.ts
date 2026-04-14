@@ -1,8 +1,6 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
 import { ProjectSettingsCategory } from '../../capabilities/project/interface';
-import { BaseToolExecutor, ToolHandler } from '../base-tool';
-import { ToolDefinition, ToolResponse } from '../../mcp/interface';
-import { makeError, ToolErrorCode } from '../../utils/error-codes';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse, makeError, ToolErrorCode } from '../base-tool';
 
 /**
  * ProjectToolsV2 — 项目工具 v2

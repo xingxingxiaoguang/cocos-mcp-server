@@ -1,5 +1,5 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
 import type { AssetCapability } from '../../capabilities/asset/interface';
 
 export class AssetToolsV2 implements ToolExecutor {

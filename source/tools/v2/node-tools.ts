@@ -1,5 +1,5 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../../mcp/interface';
+import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
 import type { NodeCapability } from '../../capabilities/node/interface';
 
 export class NodeToolsV2 implements ToolExecutor {

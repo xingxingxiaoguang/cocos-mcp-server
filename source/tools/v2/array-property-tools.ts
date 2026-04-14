@@ -1,6 +1,4 @@
-import { ToolDefinition, ToolResponse } from '../../mcp/interface';
-import { makeError, ToolErrorCode } from '../../utils/error-codes';
-import { BaseToolExecutor } from '../base-tool';
+import { BaseToolExecutor, ToolDefinition, ToolResponse, makeError, ToolErrorCode } from '../base-tool';
 import { actionEnum, path as pathSchema, uuid as uuidSchema } from '../schemas/common';
 
 /**
