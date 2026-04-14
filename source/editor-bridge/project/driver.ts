@@ -1,12 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import { ProjectBridgeDriver, ProjectConfigCandidate, ProjectRuntimeInfo } from './contract';
 
-const PROJECT_CHANNEL = 'project';
-
-class EditorProjectDriver implements ProjectBridgeDriver {
-    constructor(private readonly profile: RuntimeProfile) {}
+class EditorProjectDriver extends BaseDriver implements ProjectBridgeDriver {
+    constructor(profile: RuntimeProfile) {
+        super(profile);
+    }
 
     getRuntimeInfo(): ProjectRuntimeInfo {
         const editor = (globalThis as any).Editor;
@@ -40,9 +41,8 @@ class EditorProjectDriver implements ProjectBridgeDriver {
     }
 
     async queryProjectConfig(): Promise<unknown> {
-        this.ensureProjectQueryAvailable();
-        const request = (globalThis as any).Editor.Message.request as (channel: string, message: string, ...args: unknown[]) => Promise<unknown>;
-        return request(PROJECT_CHANNEL, 'query-config', 'project');
+        this.ensureFeatureAvailable('projectQueryConfig');
+        return this.request('project', 'query-config', 'project');
     }
 
     // =========================================================================
@@ -113,11 +113,6 @@ class EditorProjectDriver implements ProjectBridgeDriver {
         return projectPath;
     }
 
-    private ensureProjectQueryAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function') throw new Error('Editor.Message.request is unavailable in the current runtime');
-        if (!this.profile.features.projectQueryConfig) throw new Error('Runtime profile does not support projectQueryConfig');
-    }
 }
 
 export function createProjectDriver(profile: RuntimeProfile): ProjectBridgeDriver {

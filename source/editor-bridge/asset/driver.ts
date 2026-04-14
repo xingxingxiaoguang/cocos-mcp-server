@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import {
     AssetBridgeDriver,
@@ -24,51 +25,50 @@ const TEXT_REFERENCE_EXTENSIONS = [
     '.graph', '.csv', '.md', '.html', '.css',
 ];
 
-class EditorAssetDriver implements AssetBridgeDriver {
-    constructor(private readonly profile: RuntimeProfile) {}
+class EditorAssetDriver extends BaseDriver implements AssetBridgeDriver {
 
     // =========================================================================
     // 查询（原有）
     // =========================================================================
 
     async queryReady(): Promise<boolean> {
-        this.ensureAvailable();
-        const result = await this.request('query-ready');
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'query-ready');
         return Boolean(result);
     }
 
     async queryAssetInfo(assetPath: string): Promise<AssetMetadata | null> {
-        this.ensureAvailable();
-        const result = await this.request('query-asset-info', assetPath);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'query-asset-info', assetPath);
         return result ? (result as AssetMetadata) : null;
     }
 
     async queryAssetMeta(urlOrUuid: string): Promise<Record<string, unknown>> {
-        this.ensureAvailable();
-        const result = await this.request('query-asset-meta', urlOrUuid);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'query-asset-meta', urlOrUuid);
         return (result ?? {}) as Record<string, unknown>;
     }
 
     async queryAssets(query: AssetQueryInput): Promise<AssetMetadata[]> {
-        this.ensureAvailable();
-        const result = await this.request('query-assets', query);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'query-assets', query);
         return (Array.isArray(result) ? result : []) as AssetMetadata[];
     }
 
     async queryAssetUrl(uuid: string): Promise<string | null> {
-        this.ensureAvailable();
-        const result = await this.request('query-url', uuid);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'query-url', uuid);
         return typeof result === 'string' ? result : null;
     }
 
     async readAsset(urlOrUuid: string): Promise<string | unknown> {
-        this.ensureAvailable();
-        return this.request('read-asset', urlOrUuid);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        return this.request('asset-db', 'read-asset', urlOrUuid);
     }
 
     async generateAvailableUrl(url: string): Promise<string> {
-        this.ensureAvailable();
-        const result = await this.request('generate-available-url', url);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'generate-available-url', url);
         return typeof result === 'string' ? result : url;
     }
 
@@ -235,8 +235,8 @@ class EditorAssetDriver implements AssetBridgeDriver {
     // =========================================================================
 
     async createAsset(input: AssetCreateInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('create-asset', input.url, input.content, {
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'create-asset', input.url, input.content, {
             overwrite: input.overwrite,
             rename: input.rename,
         });
@@ -244,53 +244,53 @@ class EditorAssetDriver implements AssetBridgeDriver {
     }
 
     async importAsset(input: AssetImportInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('import-asset', input.source, input.target);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'import-asset', input.source, input.target);
         return result as AssetMutationResult;
     }
 
     async saveAsset(input: AssetSaveInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('save-asset', input.url, input.content);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'save-asset', input.url, input.content);
         return result as AssetMutationResult;
     }
 
     async saveAssetMeta(input: AssetSaveMetaInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('save-asset-meta', input.urlOrUuid, input.content);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'save-asset-meta', input.urlOrUuid, input.content);
         return result as AssetMutationResult;
     }
 
     async reimportAsset(url: string): Promise<void> {
-        this.ensureAvailable();
-        await this.request('reimport-asset', url);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        await this.request('asset-db', 'reimport-asset', url);
     }
 
     async moveAsset(input: AssetMoveInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('move-asset', input.source, input.target);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'move-asset', input.source, input.target);
         return result as AssetMutationResult;
     }
 
     async copyAsset(input: AssetCopyInput): Promise<AssetMutationResult> {
-        this.ensureAvailable();
-        const result = await this.request('copy-asset', input.source, input.target);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        const result = await this.request('asset-db', 'copy-asset', input.source, input.target);
         return result as AssetMutationResult;
     }
 
     async deleteAsset(url: string): Promise<void> {
-        this.ensureAvailable();
-        await this.request('delete-asset', url);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        await this.request('asset-db', 'delete-asset', url);
     }
 
     async refreshAsset(targetPath?: string): Promise<void> {
-        this.ensureAvailable();
-        await this.request('refresh-asset', targetPath);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        await this.request('asset-db', 'refresh-asset', targetPath);
     }
 
     async openAsset(urlOrUuid: string): Promise<void> {
-        this.ensureAvailable();
-        await this.request('open-asset', urlOrUuid);
+        this.ensureFeatureAvailable('assetQueryAssets');
+        await this.request('asset-db', 'open-asset', urlOrUuid);
     }
 
     // =========================================================================
@@ -341,23 +341,6 @@ class EditorAssetDriver implements AssetBridgeDriver {
         }
     }
 
-    // =========================================================================
-    // IPC 基础设施
-    // =========================================================================
-
-    private async request(message: string, ...args: unknown[]): Promise<unknown> {
-        const request = (globalThis as any).Editor.Message.request as (
-            channel: string, message: string, ...payload: unknown[]
-        ) => Promise<unknown>;
-        return request(ASSET_DB_CHANNEL, message, ...args);
-    }
-
-    private ensureAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function' || !this.profile.features.assetQueryAssets) {
-            throw new Error('Editor.Message.request is unavailable in the current runtime');
-        }
-    }
 }
 
 export function createAssetDriver(profile: RuntimeProfile): AssetBridgeDriver {

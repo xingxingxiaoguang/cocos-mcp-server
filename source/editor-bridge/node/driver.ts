@@ -1,3 +1,4 @@
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import { SceneQueryDriver } from '../scene-query/contract';
 import {
@@ -24,72 +25,72 @@ import {
     TransformType,
 } from './contract';
 
-const SCENE_CHANNEL = 'scene';
-
-class EditorNodeDriver implements NodeBridgeDriver {
+class EditorNodeDriver extends BaseDriver implements NodeBridgeDriver {
     private cidNameMap: Map<string, string> | null = null;
 
     constructor(
-        private readonly profile: RuntimeProfile,
+        profile: RuntimeProfile,
         private readonly sceneQuery: SceneQueryDriver,
-    ) {}
+    ) {
+        super(profile);
+    }
 
     // =========================================================================
     // 低层级 IPC 操作（原有）
     // =========================================================================
 
     async createNode(input: NodeCreateInput): Promise<string> {
-        this.ensureAvailable();
-        const result = await this.requestScene('create-node', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'create-node', input);
         return Array.isArray(result) ? (result[0] as string) : (result as string);
     }
 
     async setParent(input: NodeSetParentInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('set-parent', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'set-parent', input);
     }
 
     async setProperty(input: NodeSetPropertyInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('set-property', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'set-property', input);
     }
 
     async resetProperty(input: NodeResetPropertyInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('reset-property', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'reset-property', input);
     }
 
     async resetNode(uuid: string): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('reset-node', { uuid });
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'reset-node', { uuid });
     }
 
     async removeNode(uuid: string): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('remove-node', { uuid });
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'remove-node', { uuid });
     }
 
     async duplicateNode(uuid: string): Promise<string> {
-        this.ensureAvailable();
-        const result = await this.requestScene('duplicate-node', uuid);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'duplicate-node', uuid);
         return Array.isArray(result) ? (result[0] as string) : (result as string);
     }
 
     async copyNode(uuids: string[]): Promise<string[]> {
-        this.ensureAvailable();
-        const result = await this.requestScene('copy-node', uuids);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'copy-node', uuids);
         return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
     async pasteNode(input: NodePasteInput): Promise<string[]> {
-        this.ensureAvailable();
-        const result = await this.requestScene('paste-node', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'paste-node', input);
         return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
     async cutNode(uuids: string[]): Promise<string[]> {
-        this.ensureAvailable();
-        const result = await this.requestScene('cut-node', uuids);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'cut-node', uuids);
         return Array.isArray(result) ? (result as string[]) : [result as string];
     }
 
@@ -269,23 +270,6 @@ class EditorNodeDriver implements NodeBridgeDriver {
         return this.cidNameMap;
     }
 
-    // =========================================================================
-    // IPC 基础设施
-    // =========================================================================
-
-    private async requestScene(message: string, ...args: unknown[]): Promise<unknown> {
-        const request = (globalThis as any).Editor.Message.request as (
-            targetChannel: string, targetMessage: string, ...payload: unknown[]
-        ) => Promise<unknown>;
-        return request(SCENE_CHANNEL, message, ...args);
-    }
-
-    private ensureAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function' || !this.profile.features.sceneQueryNodeTree) {
-            throw new Error('Editor.Message.request is unavailable in the current runtime');
-        }
-    }
 }
 
 export function createNodeDriver(profile: RuntimeProfile, sceneQuery: SceneQueryDriver): NodeBridgeDriver {

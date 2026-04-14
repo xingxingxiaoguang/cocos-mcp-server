@@ -1,3 +1,4 @@
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import { SceneQueryDriver } from '../scene-query/contract';
 import {
@@ -27,44 +28,44 @@ import {
     SpriteStateResult,
 } from './contract';
 
-const SCENE_CHANNEL = 'scene';
-
-class EditorComponentDriver implements ComponentBridgeDriver {
+class EditorComponentDriver extends BaseDriver implements ComponentBridgeDriver {
     private cidNameMap: Map<string, string> | null = null;
 
     constructor(
-        private readonly profile: RuntimeProfile,
+        profile: RuntimeProfile,
         private readonly sceneQuery: SceneQueryDriver,
-    ) {}
+    ) {
+        super(profile);
+    }
 
     // =========================================================================
     // 低层级 IPC 操作（原有）
     // =========================================================================
 
     async createComponent(input: ComponentCreateInput): Promise<ComponentCreateResult> {
-        this.ensureAvailable();
-        const result = await this.requestScene('create-component', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        const result = await this.request('scene', 'create-component', input);
         return (result ?? {}) as ComponentCreateResult;
     }
 
     async removeArrayElement(input: RemoveArrayElementInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('remove-array-element', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'remove-array-element', input);
     }
 
     async resetComponent(input: ComponentResetInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('reset-component', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'reset-component', input);
     }
 
     async executeComponentMethod(input: ComponentMethodInput): Promise<unknown> {
-        this.ensureAvailable();
-        return this.requestScene('execute-component-method', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        return this.request('scene', 'execute-component-method', input);
     }
 
     async setProperty(input: ComponentSetPropertyInput): Promise<void> {
-        this.ensureAvailable();
-        await this.requestScene('set-property', input);
+        this.ensureFeatureAvailable('sceneQueryNodeTree');
+        await this.request('scene', 'set-property', input);
     }
 
     // =========================================================================
@@ -971,23 +972,6 @@ class EditorComponentDriver implements ComponentBridgeDriver {
         return expected;
     }
 
-    // =========================================================================
-    // IPC 基础设施
-    // =========================================================================
-
-    private async requestScene(message: string, ...args: unknown[]): Promise<unknown> {
-        const request = (globalThis as any).Editor.Message.request as (
-            targetChannel: string, targetMessage: string, ...payload: unknown[]
-        ) => Promise<unknown>;
-        return request(SCENE_CHANNEL, message, ...args);
-    }
-
-    private ensureAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function' || !this.profile.features.sceneQueryNodeTree) {
-            throw new Error('Editor.Message.request is unavailable in the current runtime');
-        }
-    }
 }
 
 export function createComponentDriver(profile: RuntimeProfile, sceneQuery: SceneQueryDriver): ComponentBridgeDriver {

@@ -1,3 +1,4 @@
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import { SceneHierarchyNode, SceneInfoResult } from '../../capabilities/scene/interface';
 import { SceneAssetCreateResult, SceneAssetRecord, SceneBridgeDriver } from './contract';
@@ -7,8 +8,7 @@ const SCENE_CHANNEL = 'scene';
 const SCENE_SCRIPT_PACKAGE = 'cocos-mcp-server';
 const DEFAULT_SCENE_TYPE = 'cc.Scene';
 
-class EditorSceneDriver implements SceneBridgeDriver {
-    constructor(private readonly profile: RuntimeProfile) {}
+class EditorSceneDriver extends BaseDriver implements SceneBridgeDriver {
 
     // =========================================================================
     // 查询（含归一化 — 从 service 下沉）
@@ -284,17 +284,6 @@ class EditorSceneDriver implements SceneBridgeDriver {
     private unwrapSceneResult(method: string, result: { success: boolean; data?: unknown; error?: string }): unknown {
         if (!result.success) throw new Error(result.error || `Scene method '${method}' failed`);
         return result.data;
-    }
-
-    private ensureFeatureAvailable(feature: keyof RuntimeProfile['features']): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function') throw new Error('Editor.Message.request is unavailable in the current runtime');
-        if (!this.profile.features[feature]) throw new Error(`Runtime profile does not support '${feature}'`);
-    }
-
-    private async request(channel: string, message: string, ...args: unknown[]): Promise<unknown> {
-        const request = (globalThis as any).Editor.Message.request as (targetChannel: string, targetMessage: string, ...payload: unknown[]) => Promise<unknown>;
-        return request(channel, message, ...args);
     }
 
     private getNameFromPath(scenePath: string): string {

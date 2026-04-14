@@ -1,4 +1,5 @@
 import { safeSerialize } from '../../utils/serializer';
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import {
     Vector3Like,
@@ -38,8 +39,10 @@ interface PrefabTreeContext {
     componentUuidToIndex: Map<string, number>;
 }
 
-class EditorPrefabDriver implements PrefabBridgeDriver {
-    constructor(private readonly profile: RuntimeProfile) {}
+class EditorPrefabDriver extends BaseDriver implements PrefabBridgeDriver {
+    constructor(profile: RuntimeProfile) {
+        super(profile);
+    }
 
     async listPrefabAssets(folder: string): Promise<PrefabAssetRecord[]> {
         const pattern = folder.endsWith('/')
@@ -1109,23 +1112,6 @@ class EditorPrefabDriver implements PrefabBridgeDriver {
         return fileId;
     }
 
-    private ensureRequestAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (typeof request !== 'function') {
-            throw new Error('Editor.Message.request is unavailable in the current runtime');
-        }
-    }
-
-    private async request(channel: string, message: string, ...args: unknown[]): Promise<any> {
-        this.ensureRequestAvailable();
-        const request = (globalThis as any).Editor.Message.request as (
-            requestChannel: string,
-            requestMessage: string,
-            ...payload: unknown[]
-        ) => Promise<any>;
-
-        return await request(channel, message, ...args);
-    }
 }
 
 export function createPrefabDriver(profile: RuntimeProfile): PrefabBridgeDriver {

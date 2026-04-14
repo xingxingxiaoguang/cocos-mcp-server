@@ -1,3 +1,4 @@
+import { BaseDriver } from '../base-driver';
 import { RuntimeProfile } from '../../runtime/profile';
 import {
     CocosNodeDump,
@@ -13,8 +14,7 @@ const ASSET_DB_CHANNEL = 'asset-db';
 const SCENE_CHANNEL = 'scene';
 const SCENE_SCRIPT_PACKAGE = 'cocos-mcp-server';
 
-class EditorSceneQueryDriver implements SceneQueryDriver {
-    constructor(private readonly profile: RuntimeProfile) {}
+class EditorSceneQueryDriver extends BaseDriver implements SceneQueryDriver {
 
     async queryNode(uuid: string): Promise<CocosNodeDump> {
         this.ensureAvailable();
@@ -75,30 +75,17 @@ class EditorSceneQueryDriver implements SceneQueryDriver {
 
     // -------------------------------------------------------------------------
 
-    private async requestScene(message: string, ...args: unknown[]): Promise<unknown> {
-        return this.request(SCENE_CHANNEL, message, ...args);
+    private requestScene(message: string, ...args: unknown[]): Promise<unknown> {
+        return this.request('scene', message, ...args);
     }
 
-    private async requestAssetDb(message: string, ...args: unknown[]): Promise<unknown> {
-        return this.request(ASSET_DB_CHANNEL, message, ...args);
-    }
-
-    private async request(channel: string, message: string, ...args: unknown[]): Promise<unknown> {
-        const request = (globalThis as any).Editor.Message.request as (
-            targetChannel: string,
-            targetMessage: string,
-            ...payload: unknown[]
-        ) => Promise<unknown>;
-        return request(channel, message, ...args);
+    private requestAssetDb(message: string, ...args: unknown[]): Promise<unknown> {
+        return this.request('asset-db', message, ...args);
     }
 
     private ensureAvailable(): void {
-        const request = (globalThis as any).Editor?.Message?.request;
-        if (
-            typeof request !== 'function' ||
-            !this.profile.features.sceneQueryNodeTree ||
-            !this.profile.features.assetQueryAssets
-        ) {
+        this.ensureRequestAvailable();
+        if (!this.profile.features.sceneQueryNodeTree || !this.profile.features.assetQueryAssets) {
             throw new Error('Editor.Message.request is unavailable in the current runtime');
         }
     }
