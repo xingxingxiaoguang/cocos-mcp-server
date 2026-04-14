@@ -1,9 +1,18 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import type { NodeCapability } from '../../capabilities/node/interface';
 
-export class NodeToolsV2 implements ToolExecutor {
+export class NodeToolsV2 extends BaseToolExecutor {
     private readonly node: NodeCapability = getCapabilityRegistry().node;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        create: async (args: any) => this.handleCreate(args),
+        batch_create: async (args: any) => this.handleBatchCreate(args),
+        modify: async (args: any) => this.handleModify(args),
+        delete: async (args: any) => this.handleDelete(args),
+        arrange: async (args: any) => this.handleArrange(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -362,44 +371,31 @@ export class NodeToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        try {
-            switch (toolName) {
-                case 'query': {
-                    if (args?.uuid) return { success: true, data: await this.node.queryByUuid(args.uuid) };
-                    if (args?.pattern) return { success: true, data: await this.node.searchByName(args.pattern) };
-                    if (args?.assetUuid) return { success: true, data: await this.node.queryAssetUsage(args.assetUuid) };
-                    return { success: true, data: await this.node.listAll() };
-                }
-                case 'create': {
-                    const r = await this.node.create(args);
-                    const { message, ...data } = r;
-                    return { success: true, data, message };
-                }
-                case 'batch_create': {
-                    const result = await this.node.batchCreate(args);
-                    return { success: result.failures.length === 0, data: result, message: result.message };
-                }
-                case 'modify': {
-                    const r = await this.node.modify(args);
-                    const { message, warning, ...data } = r;
-                    return { success: true, data, message, warning };
-                }
-                case 'delete': {
-                    const r = await this.node.delete(args.uuids);
-                    const { message, ...data } = r;
-                    return { success: true, data, message };
-                }
-                case 'arrange': {
-                    const r = await this.node.arrange(args);
-                    const { message, ...data } = r;
-                    return { success: true, data, message };
-                }
-                default:
-                    throw new Error(`Unknown tool: ${toolName}`);
-            }
-        } catch (e) {
-            return { success: false, error: (e as Error).message };
-        }
+    private async handleQuery(args: any): Promise<ToolResponse> {
+        if (args?.uuid) return this.ok(await this.node.queryByUuid(args.uuid));
+        if (args?.pattern) return this.ok(await this.node.searchByName(args.pattern));
+        if (args?.assetUuid) return this.ok(await this.node.queryAssetUsage(args.assetUuid));
+        return this.ok(await this.node.listAll());
+    }
+
+    private async handleCreate(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.node.create(args));
+    }
+
+    private async handleBatchCreate(args: any): Promise<ToolResponse> {
+        const result = await this.node.batchCreate(args);
+        return { success: result.failures.length === 0, data: result, message: result.message };
+    }
+
+    private async handleModify(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.node.modify(args));
+    }
+
+    private async handleDelete(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.node.delete(args.uuids));
+    }
+
+    private async handleArrange(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.node.arrange(args));
     }
 }

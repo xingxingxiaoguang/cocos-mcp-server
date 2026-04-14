@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import { safeSerialize } from '../../utils/serializer';
 
 /**
@@ -7,7 +7,11 @@ import { safeSerialize } from '../../utils/serializer';
  * category key: sceneScript (避免与 scene → SceneToolsV2 冲突)
  * 1 个工具: execute
  */
-export class SceneScriptToolsV2 implements ToolExecutor {
+export class SceneScriptToolsV2 extends BaseToolExecutor {
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        execute: async (args: any) => this.handleExecute(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -31,15 +35,6 @@ export class SceneScriptToolsV2 implements ToolExecutor {
                 }
             }
         ];
-    }
-
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'execute':
-                return await this.handleExecute(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
     }
 
     private async handleExecute(args: any): Promise<ToolResponse> {

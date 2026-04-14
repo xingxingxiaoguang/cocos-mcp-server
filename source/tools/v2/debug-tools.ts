@@ -1,4 +1,4 @@
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import { ConsoleMessage, ValidationIssue, ValidationResult } from './debug/interface';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,11 +8,18 @@ import * as path from 'path';
  * 合并自 DebugTools
  * 3 个工具: logs, execute, inspect
  */
-export class DebugToolsV2 implements ToolExecutor {
+export class DebugToolsV2 extends BaseToolExecutor {
     private consoleMessages: ConsoleMessage[] = [];
     private readonly maxMessages = 1000;
 
+    protected readonly handlers: Record<string, ToolHandler> = {
+        logs: async (args: any) => this.handleLogs(args),
+        execute: async (args: any) => this.handleExecute(args),
+        inspect: async (args: any) => this.handleInspect(args),
+    };
+
     constructor() {
+        super();
         this.setupConsoleCapture();
     }
 
@@ -112,19 +119,6 @@ export class DebugToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'logs':
-                return await this.handleLogs(args);
-            case 'execute':
-                return await this.handleExecute(args);
-            case 'inspect':
-                return await this.handleInspect(args);
-            default:
-                throw new Error(`Unknown tool: ${toolName}`);
-        }
-    }
-
     // ==================== logs ====================
 
     private async handleLogs(args: any): Promise<ToolResponse> {
@@ -178,7 +172,7 @@ export class DebugToolsV2 implements ToolExecutor {
         this.consoleMessages = [];
         try {
             Editor.Message.send('console', 'clear');
-            return { success: true, message: 'Console cleared successfully' };
+            return this.okMessage('Console cleared successfully');
         } catch (err: any) {
             return { success: false, error: err.message };
         }
@@ -541,7 +535,7 @@ export class DebugToolsV2 implements ToolExecutor {
                 issueCount: issues.length,
                 issues
             };
-            return { success: true, data: result };
+            return this.ok(result);
         } catch (err: any) {
             return { success: false, error: err.message };
         }
@@ -574,6 +568,6 @@ export class DebugToolsV2 implements ToolExecutor {
             memory: process.memoryUsage(),
             uptime: process.uptime()
         };
-        return { success: true, data: info };
+        return this.ok(info);
     }
 }

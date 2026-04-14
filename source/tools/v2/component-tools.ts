@@ -1,9 +1,16 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import type { ComponentCapability } from '../../capabilities/component/interface';
 
-export class ComponentToolsV2 implements ToolExecutor {
+export class ComponentToolsV2 extends BaseToolExecutor {
     private readonly component: ComponentCapability = getCapabilityRegistry().component;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        add: async (args: any) => this.handleAdd(args),
+        modify: async (args: any) => this.handleModify(args),
+        batch_set: async (args: any) => this.handleBatchSet(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -149,45 +156,32 @@ export class ComponentToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        try {
-            switch (toolName) {
-                case 'query': {
-                    const { uuid, componentType, action, category, scriptPath, className } = args || {};
-                    if (uuid && componentType) return this.wrapResult(await this.component.getComponentDetail(uuid, componentType));
-                    if (uuid) return this.wrapResult(await this.component.listNodeComponents(uuid));
-                    switch (action) {
-                        case 'available': return this.wrapResult(await this.component.listAvailableTypes(category));
-                        case 'classes': return this.wrapResult(await this.component.listClasses(args?.extends));
-                        case 'scene_components': return this.wrapResult(await this.component.listSceneComponents());
-                        case 'has_script': return this.wrapResult(await this.component.hasScript(scriptPath || className));
-                        default: throw new Error('Must provide uuid or specify action');
-                    }
-                }
-                case 'add': {
-                    const result = await this.component.add(args);
-                    return { success: true, data: result, message: result.message, warning: result.warning };
-                }
-                case 'modify': {
-                    const result = await this.component.modify(args);
-                    return { success: true, data: result, message: result.message, warning: result.warning };
-                }
-                case 'batch_set': {
-                    const result = await this.component.batchSet(args);
-                    if (result.failures.length > 0) {
-                        return { success: false, error: result.message, data: result };
-                    }
-                    return { success: true, data: result, message: result.message };
-                }
-                default:
-                    throw new Error(`Unknown tool: ${toolName}`);
-            }
-        } catch (e) {
-            return { success: false, error: (e as Error).message };
+    private async handleQuery(args: any): Promise<ToolResponse> {
+        const { uuid, componentType, action, category, scriptPath, className } = args || {};
+        if (uuid && componentType) return this.ok(await this.component.getComponentDetail(uuid, componentType));
+        if (uuid) return this.ok(await this.component.listNodeComponents(uuid));
+        switch (action) {
+            case 'available': return this.ok(await this.component.listAvailableTypes(category));
+            case 'classes': return this.ok(await this.component.listClasses(args?.extends));
+            case 'scene_components': return this.ok(await this.component.listSceneComponents());
+            case 'has_script': return this.ok(await this.component.hasScript(scriptPath || className));
+            default: throw new Error('Must provide uuid or specify action');
         }
     }
 
-    private wrapResult(data: unknown): ToolResponse {
-        return { success: true, data };
+    private async handleAdd(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.component.add(args));
+    }
+
+    private async handleModify(args: any): Promise<ToolResponse> {
+        return this.okResult(await this.component.modify(args));
+    }
+
+    private async handleBatchSet(args: any): Promise<ToolResponse> {
+        const result = await this.component.batchSet(args);
+        if (result.failures.length > 0) {
+            return { success: false, error: result.message, data: result };
+        }
+        return { success: true, data: result, message: result.message };
     }
 }

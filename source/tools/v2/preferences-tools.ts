@@ -63,24 +63,18 @@ export class PreferencesToolsV2 extends BaseToolExecutor {
         });
 
         if (result.mode === 'single') {
-            return {
-                success: true,
-                data: {
-                    name: result.target.name,
-                    path: result.target.path,
-                    type: result.target.type,
-                    config: result.config,
-                },
-            };
+            return this.ok({
+                name: result.target.name,
+                path: result.target.path,
+                type: result.target.type,
+                config: result.config,
+            });
         }
 
-        return {
-            success: true,
-            data: {
-                categories: result.categories,
-                preferences: result.preferences,
-            },
-        };
+        return this.ok({
+            categories: result.categories,
+            preferences: result.preferences,
+        });
     }
 
     // ==================== modify ====================
@@ -122,10 +116,7 @@ export class PreferencesToolsV2 extends BaseToolExecutor {
             type: this.normalizeScope(type),
         });
 
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async resetPreferences(name?: string, type: string = 'global'): Promise<ToolResponse> {
@@ -142,10 +133,7 @@ export class PreferencesToolsV2 extends BaseToolExecutor {
             type: this.normalizeScope(type),
         });
 
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async openPreferencesSettings(tab?: string): Promise<ToolResponse> {
@@ -153,23 +141,17 @@ export class PreferencesToolsV2 extends BaseToolExecutor {
             tab: this.optionalTrimmedString(tab),
         });
 
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async exportPreferences(): Promise<ToolResponse> {
         const prefsResult = await this.preferences.export();
-        return {
-            success: true,
-            data: {
-                categories: prefsResult.categories,
-                preferences: prefsResult.preferences,
-                jsonData: prefsResult.jsonData,
-                message: prefsResult.message,
-            },
-        };
+        return this.ok({
+            categories: prefsResult.categories,
+            preferences: prefsResult.preferences,
+            jsonData: prefsResult.jsonData,
+            message: prefsResult.message,
+        });
     }
 
     private async importPreferences(configJson?: string): Promise<ToolResponse> {

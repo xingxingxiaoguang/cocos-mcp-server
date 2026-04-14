@@ -1,9 +1,15 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import type { PrefabCapability } from '../../capabilities/prefab/interface';
 
-export class PrefabToolsV2 implements ToolExecutor {
+export class PrefabToolsV2 extends BaseToolExecutor {
     private readonly prefab: PrefabCapability = getCapabilityRegistry().prefab;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        create: async (args: any) => this.handleCreate(args),
+        update: async (args: any) => this.handleUpdate(args),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -107,67 +113,51 @@ export class PrefabToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        switch (toolName) {
-            case 'query': {
-                if (args?.prefabPath) {
-                    return { success: true, data: await this.prefab.query({ prefabPath: args.prefabPath }) };
-                }
-                const result = await this.prefab.list({ folder: args?.folder });
-                return { success: true, data: result.prefabs };
-            }
-            case 'create':
-                switch (args?.action) {
-                    case 'from_node':
-                        return this.toResponse(await this.prefab.createFromNode({
-                            nodeUuid: args.uuid,
-                            savePath: args.savePath,
-                            prefabName: args.prefabName,
-                        }));
-                    case 'instantiate':
-                        return this.toResponse(await this.prefab.instantiate({
-                            prefabPath: args.prefabPath,
-                            parentUuid: args.parentUuid,
-                            name: args.name,
-                            position: args.position,
-                        }));
-                    case 'duplicate':
-                        return this.toResponse(await this.prefab.duplicate({
-                            sourcePath: args.sourcePath,
-                            targetPath: args.targetPath,
-                            prefabName: args.prefabName,
-                        }));
-                    default:
-                        throw new Error(`Unknown create action: ${args?.action}`);
-                }
-            case 'update':
-                switch (args?.action) {
-                    case 'apply': {
-                        const result = await this.prefab.apply({ nodeUuid: args.uuid });
-                        return { success: true, data: result, message: result.message };
-                    }
-                    case 'revert': {
-                        const result = await this.prefab.revert({
-                            nodeUuid: args.uuid,
-                            assetUuid: args.assetUuid,
-                        });
-                        return { success: true, data: result, message: result.message };
-                    }
-                    default:
-                        throw new Error(`Unknown update action: ${args?.action}`);
-                }
+    private async handleQuery(args: any): Promise<ToolResponse> {
+        if (args?.prefabPath) {
+            return this.ok(await this.prefab.query({ prefabPath: args.prefabPath }));
+        }
+        const result = await this.prefab.list({ folder: args?.folder });
+        return this.ok(result.prefabs);
+    }
+
+    private async handleCreate(args: any): Promise<ToolResponse> {
+        switch (args?.action) {
+            case 'from_node':
+                return this.okResult(await this.prefab.createFromNode({
+                    nodeUuid: args.uuid,
+                    savePath: args.savePath,
+                    prefabName: args.prefabName,
+                }));
+            case 'instantiate':
+                return this.okResult(await this.prefab.instantiate({
+                    prefabPath: args.prefabPath,
+                    parentUuid: args.parentUuid,
+                    name: args.name,
+                    position: args.position,
+                }));
+            case 'duplicate':
+                return this.okResult(await this.prefab.duplicate({
+                    sourcePath: args.sourcePath,
+                    targetPath: args.targetPath,
+                    prefabName: args.prefabName,
+                }));
             default:
-                throw new Error(`Unknown tool: ${toolName}`);
+                throw new Error(`Unknown create action: ${args?.action}`);
         }
     }
 
-    private toResponse(result: { data: unknown; message?: string; warning?: string; instruction?: string }): ToolResponse {
-        return {
-            success: true,
-            data: result.data,
-            ...(result.message ? { message: result.message } : {}),
-            ...(result.warning ? { warning: result.warning } : {}),
-            ...(result.instruction ? { instruction: result.instruction } : {}),
-        };
+    private async handleUpdate(args: any): Promise<ToolResponse> {
+        switch (args?.action) {
+            case 'apply':
+                return this.okResult(await this.prefab.apply({ nodeUuid: args.uuid }));
+            case 'revert':
+                return this.okResult(await this.prefab.revert({
+                    nodeUuid: args.uuid,
+                    assetUuid: args.assetUuid,
+                }));
+            default:
+                throw new Error(`Unknown update action: ${args?.action}`);
+        }
     }
 }

@@ -69,21 +69,13 @@ export class ProjectToolsV2 extends BaseToolExecutor {
     }
 
     private async getProjectInfo(): Promise<ToolResponse> {
-        const info = await this.project.queryInfo();
-        return {
-            success: true,
-            data: info,
-        };
+        return this.ok(await this.project.queryInfo());
     }
 
     private async getProjectSettings(category: string = 'general'): Promise<ToolResponse> {
-        const result = await this.project.querySettings({
+        return this.ok(await this.project.querySettings({
             category: this.normalizeCategory(category),
-        });
-        return {
-            success: true,
-            data: result,
-        };
+        }));
     }
 
     private async getBuildSettings(): Promise<ToolResponse> {

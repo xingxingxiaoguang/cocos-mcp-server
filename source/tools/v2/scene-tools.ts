@@ -118,32 +118,20 @@ export class SceneToolsV2 extends BaseToolExecutor {
     }
 
     private async queryInfo(): Promise<ToolResponse> {
-        return {
-            success: true,
-            data: await this.scene.queryInfo(),
-        };
+        return this.ok(await this.scene.queryInfo());
     }
 
     private async queryHierarchy(includeComponents: boolean = false): Promise<ToolResponse> {
-        return {
-            success: true,
-            data: await this.scene.queryHierarchy({ includeComponents }),
-        };
+        return this.ok(await this.scene.queryHierarchy({ includeComponents }));
     }
 
     private async queryList(): Promise<ToolResponse> {
         const result = await this.scene.listScenes();
-        return {
-            success: true,
-            data: result.scenes,
-        };
+        return this.ok(result.scenes);
     }
 
     private async queryStatus(): Promise<ToolResponse> {
-        return {
-            success: true,
-            data: await this.scene.queryStatus(),
-        };
+        return this.ok(await this.scene.queryStatus());
     }
 
     private async handleOpen(args: any): Promise<ToolResponse> {
@@ -156,10 +144,7 @@ export class SceneToolsV2 extends BaseToolExecutor {
             scenePath: scenePath.value,
         });
 
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async handleSave(args: any): Promise<ToolResponse> {
@@ -178,10 +163,7 @@ export class SceneToolsV2 extends BaseToolExecutor {
 
     private async saveScene(): Promise<ToolResponse> {
         const result = await this.scene.saveScene();
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async saveSceneAs(path: string): Promise<ToolResponse> {
@@ -204,10 +186,7 @@ export class SceneToolsV2 extends BaseToolExecutor {
 
     private async closeScene(): Promise<ToolResponse> {
         const result = await this.scene.closeScene();
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async handleCreate(args: any): Promise<ToolResponse> {
@@ -253,26 +232,17 @@ export class SceneToolsV2 extends BaseToolExecutor {
 
     private async softReloadScene(): Promise<ToolResponse> {
         const result = await this.scene.reloadScene();
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async sceneSnapshot(): Promise<ToolResponse> {
         const result = await this.scene.createSnapshot();
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private async sceneSnapshotAbort(): Promise<ToolResponse> {
         const result = await this.scene.abortSnapshot();
-        return {
-            success: true,
-            message: result.message,
-        };
+        return this.okMessage(result.message);
     }
 
     private requireTrimmedString(

@@ -1,9 +1,17 @@
 import { getCapabilityRegistry } from '../../runtime/capability-registry';
-import { ToolDefinition, ToolExecutor, ToolResponse } from '../base-tool';
+import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import type { AssetCapability } from '../../capabilities/asset/interface';
 
-export class AssetToolsV2 implements ToolExecutor {
+export class AssetToolsV2 extends BaseToolExecutor {
     private readonly asset: AssetCapability = getCapabilityRegistry().asset;
+
+    protected readonly handlers: Record<string, ToolHandler> = {
+        query: async (args: any) => this.handleQuery(args),
+        create: async (args: any) => this.ok(await this.asset.create(args)),
+        modify: async (args: any) => this.ok(await this.asset.modify(args)),
+        delete: async (args: any) => this.ok(await this.asset.delete(args)),
+        refresh: async (args: any) => this.ok(await this.asset.refresh(args)),
+    };
 
     getTools(): ToolDefinition[] {
         return [
@@ -132,34 +140,12 @@ export class AssetToolsV2 implements ToolExecutor {
         ];
     }
 
-    async execute(toolName: string, args: any): Promise<ToolResponse> {
-        try {
-            switch (toolName) {
-                case 'query': {
-                    if (args?.action === 'db_ready') return this.wrapResult(await this.asset.checkDbReady());
-                    if (args?.action === 'dependencies') return this.wrapResult(await this.asset.getDependencies({ urlOrUuid: args.uuid || args.path, direction: args.direction }));
-                    if (args?.action === 'unused') return this.wrapResult(await this.asset.getUnused({ directory: args.directory, excludeDirectories: args.excludeDirectories }));
-                    if (args?.uuid || args?.path) return this.wrapResult(await this.asset.getInfo({ uuid: args.uuid, path: args.path, includeSubAssets: args.includeSubAssets }));
-                    if (args?.name) return this.wrapResult(await this.asset.searchByName({ name: args.name, exactMatch: args.exactMatch, type: args.type, folder: args.folder, maxResults: args.maxResults }));
-                    return this.wrapResult(await this.asset.list({ type: args?.type, folder: args?.folder }));
-                }
-                case 'create':
-                    return this.wrapResult(await this.asset.create(args));
-                case 'modify':
-                    return this.wrapResult(await this.asset.modify(args));
-                case 'delete':
-                    return this.wrapResult(await this.asset.delete(args));
-                case 'refresh':
-                    return this.wrapResult(await this.asset.refresh(args));
-                default:
-                    throw new Error(`Unknown tool: ${toolName}`);
-            }
-        } catch (e) {
-            return { success: false, error: (e as Error).message };
-        }
-    }
-
-    private wrapResult(data: unknown): ToolResponse {
-        return { success: true, data };
+    private async handleQuery(args: any): Promise<ToolResponse> {
+        if (args?.action === 'db_ready') return this.ok(await this.asset.checkDbReady());
+        if (args?.action === 'dependencies') return this.ok(await this.asset.getDependencies({ urlOrUuid: args.uuid || args.path, direction: args.direction }));
+        if (args?.action === 'unused') return this.ok(await this.asset.getUnused({ directory: args.directory, excludeDirectories: args.excludeDirectories }));
+        if (args?.uuid || args?.path) return this.ok(await this.asset.getInfo({ uuid: args.uuid, path: args.path, includeSubAssets: args.includeSubAssets }));
+        if (args?.name) return this.ok(await this.asset.searchByName({ name: args.name, exactMatch: args.exactMatch, type: args.type, folder: args.folder, maxResults: args.maxResults }));
+        return this.ok(await this.asset.list({ type: args?.type, folder: args?.folder }));
     }
 }

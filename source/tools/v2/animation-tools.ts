@@ -106,11 +106,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
     }
 
     private async listClips(): Promise<ToolResponse> {
-        const result = await this.animation.listClips();
-        return {
-            success: true,
-            data: result,
-        };
+        return this.ok(await this.animation.listClips());
     }
 
     private async createClip(args: any): Promise<ToolResponse> {
@@ -125,7 +121,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
             return { success: false, error: 'savePath must end with .anim' };
         }
 
-        return this.toToolResponse(await this.animation.createClip({
+        return this.okResult(await this.animation.createClip({
             savePath,
             name: args?.name,
             duration: args?.duration,
@@ -136,7 +132,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
     private async getClipInfo(args: any): Promise<ToolResponse> {
         const nodeUuid = this.requireString(args?.nodeUuid, 'nodeUuid');
         if (!nodeUuid.success) return nodeUuid.response;
-        return this.toToolResponse(await this.animation.getClipInfo({
+        return this.okResult(await this.animation.getClipInfo({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -148,7 +144,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireNodeAndClipContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.listEditableProperties({
+        return this.okResult(await this.animation.listEditableProperties({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -160,7 +156,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireTrackContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.addTrack({
+        return this.okResult(await this.animation.addTrack({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -174,7 +170,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireTrackContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.removeTrack({
+        return this.okResult(await this.animation.removeTrack({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -188,7 +184,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.createKey({
+        return this.okResult(await this.animation.createKey({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -204,7 +200,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.setKeyframe({
+        return this.okResult(await this.animation.setKeyframe({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -224,7 +220,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
             return { success: false, error: 'frames must be a non-empty array for action=remove_key' };
         }
 
-        return this.toToolResponse(await this.animation.removeKey({
+        return this.okResult(await this.animation.removeKey({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -239,7 +235,7 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireFrameContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.queryValueAtFrame({
+        return this.okResult(await this.animation.queryValueAtFrame({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
@@ -254,21 +250,12 @@ export class AnimationToolsV2 extends BaseToolExecutor {
         const validation = this.requireNodeAndClipContext(args);
         if (!validation.success) return validation.response;
 
-        return this.toToolResponse(await this.animation.saveClip({
+        return this.okResult(await this.animation.saveClip({
             nodeUuid: args.nodeUuid,
             clipUuid: this.optionalTrimmedString(args?.clipUuid),
             uuid: this.optionalTrimmedString(args?.uuid),
             path: this.optionalTrimmedString(args?.path),
         }));
-    }
-
-    private toToolResponse(result: { data: unknown; warning?: string; message?: string }): ToolResponse {
-        return {
-            success: true,
-            data: result.data,
-            ...(result.warning ? { warning: result.warning } : {}),
-            ...(result.message ? { message: result.message } : {}),
-        };
     }
 
     private requireNodeAndClipContext(args: any): { success: true } | { success: false; response: ToolResponse } {
