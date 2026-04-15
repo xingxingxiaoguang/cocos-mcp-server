@@ -6,15 +6,6 @@ export interface ConsoleMessage {
     stack?: string;
 }
 
-export interface PerformanceStats {
-    nodeCount: number | null;
-    componentCount: number | null;
-    drawCalls: number | null;
-    triangles: number | null;
-    memory: Record<string, any>;
-    note?: string;
-}
-
 export interface ValidationIssue {
     type: 'error' | 'warning' | 'info';
     category: string;
@@ -27,4 +18,17 @@ export interface ValidationResult {
     valid: boolean;
     issueCount: number;
     issues: ValidationIssue[];
+}
+
+export interface RuntimeSummary {
+    fps: number;
+    drawCalls: number;
+    triangles: number;
+    nodeCount: number;
+    activeNodeCount: number;
+    componentCount: number;
+    currentScene: string;
+    memory: { jsHeapUsed: number; jsHeapTotal: number };
+    errorCount: number;
+    uptime: number;
 }

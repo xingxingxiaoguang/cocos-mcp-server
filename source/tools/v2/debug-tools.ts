@@ -1,5 +1,6 @@
 import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
 import { ConsoleMessage, ValidationIssue, ValidationResult } from './debug/interface';
+import { getGlobalRuntimeBridge } from '../../services/runtime-bridge';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -68,18 +69,19 @@ export class DebugToolsV2 extends BaseToolExecutor {
         return [
             {
                 name: 'logs',
-                description: 'Query logs. action=console (default): get editor console logs from memory cache. action=project: get project logs from log file. action=file_info: get log file metadata. action=search: search logs with regex. action=clear: clear console.',
+                description: 'Query logs. action=query (default): get logs with optional source/level/keyword filters. source=runtime for preview game logs. action=search: search logs with regex. action=clear: clear console.',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         action: {
                             type: 'string',
-                            enum: ['console', 'project', 'file_info', 'search', 'clear'],
-                            description: 'Operation type. Default: console'
+                            enum: ['query', 'search', 'clear'],
+                            description: 'Operation type. Default: query'
                         },
-                        limit: { type: 'number', description: 'Number of logs to retrieve (console/project)' },
-                        filter: { type: 'string', description: 'Filter keyword' },
-                        level: { type: 'string', enum: ['log', 'warn', 'error', 'info', 'all', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE', 'ALL'], description: 'Log level filter' },
+                        source: { type: 'string', enum: ['console', 'file', 'runtime', 'all'], description: 'Log source for action=query. runtime=preview game logs via RuntimeBridge. Default: all' },
+                        limit: { type: 'number', description: 'Number of logs to retrieve for action=query' },
+                        filter: { type: 'string', description: 'Filter keyword for action=query' },
+                        level: { type: 'string', enum: ['log', 'warn', 'error', 'info', 'all'], description: 'Log level filter for action=query' },
                         pattern: { type: 'string', description: 'Search pattern (supports regex) for action=search' },
                         maxResults: { type: 'number', description: 'Max search results for action=search' },
                         contextLines: { type: 'number', description: 'Context lines around each match for action=search' }
@@ -88,32 +90,30 @@ export class DebugToolsV2 extends BaseToolExecutor {
             },
             {
                 name: 'execute',
-                description: 'Execute JavaScript code in scene context. Returns auto-serialized results. Engine objects (cc.Node, cc.Scene, etc.) are automatically converted to plain objects with common properties extracted. Runtime edits made here are not persisted by scene_save; use component_modify for durable scene changes. Use require("cc") to access engine APIs.',
+                description: 'Execute JavaScript code. target=editor (default): execute in editor scene process. target=runtime: execute in preview browser (requires runtime agent connected). Use require("cc") or window.cc to access engine APIs.',
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        script: { type: 'string', description: 'JavaScript code to execute' }
+                        script: { type: 'string', description: 'JavaScript code to execute' },
+                        target: { type: 'string', enum: ['editor', 'runtime'], description: 'Execution context. editor=scene process (default), runtime=preview browser' }
                     },
                     required: ['script']
                 }
             },
             {
                 name: 'inspect',
-                description: 'Inspect editor/scene state. action=node_tree: get node tree for debugging. action=performance: get performance stats. action=validate: validate scene for issues. action=editor_info: get editor environment info.',
+                description: 'Inspect editor/scene state. action=env (default): get editor environment info. action=validate: validate scene for issues. action=runtime_summary: get preview runtime snapshot (FPS, drawCalls, nodeCount, memory, etc.). For node tree use scene_query action=hierarchy.',
                 inputSchema: {
                     type: 'object',
                     properties: {
                         action: {
                             type: 'string',
-                            enum: ['node_tree', 'performance', 'validate', 'editor_info'],
-                            description: 'Inspection type'
+                            enum: ['env', 'validate', 'runtime_summary'],
+                            description: 'Inspection type. Default: env'
                         },
-                        uuid: { type: 'string', description: 'Root node UUID for action=node_tree' },
-                        depth: { type: 'number', description: 'Max tree depth for action=node_tree' },
                         checkMissingAssets: { type: 'boolean', description: 'Check missing assets for action=validate' },
                         checkPerformance: { type: 'boolean', description: 'Check performance for action=validate' }
-                    },
-                    required: ['action']
+                    }
                 }
             }
         ];
@@ -122,14 +122,10 @@ export class DebugToolsV2 extends BaseToolExecutor {
     // ==================== logs ====================
 
     private async handleLogs(args: any): Promise<ToolResponse> {
-        const action = args.action || 'console';
+        const action = args.action || 'query';
         switch (action) {
-            case 'console':
-                return await this.getConsoleLogs(args.limit, args.filter || args.level);
-            case 'project':
-                return await this.getProjectLogs(args.limit, args.filter, args.level);
-            case 'file_info':
-                return await this.getLogFileInfo();
+            case 'query':
+                return await this.queryLogs(args);
             case 'search':
                 return await this.searchProjectLogs(args.pattern, args.maxResults, args.contextLines);
             case 'clear':
@@ -137,6 +133,62 @@ export class DebugToolsV2 extends BaseToolExecutor {
             default:
                 return { success: false, error: `Unknown logs action: ${action}` };
         }
+    }
+
+    private async queryLogs(args: any): Promise<ToolResponse> {
+        const source = args.source || 'all';
+        const limit = args.limit || 100;
+        const filter = args.filter;
+        const level = args.level || 'all';
+
+        if (source === 'console') {
+            return await this.getConsoleLogs(limit, filter || level);
+        }
+        if (source === 'file') {
+            return await this.getProjectLogs(limit, filter, level);
+        }
+        if (source === 'runtime') {
+            return this.getRuntimeLogs(limit, level);
+        }
+
+        // source=all: merge all sources
+        const consoleLogs = await this.getConsoleLogs(limit, filter || level);
+        const fileLogs = await this.getProjectLogs(limit, filter, level);
+        const runtimeResult = this.getRuntimeLogs(limit, level);
+
+        const merged: any[] = [];
+        if (consoleLogs.success && consoleLogs.data?.logs?.length) {
+            merged.push(...consoleLogs.data.logs.map((log: any) => ({ ...log, source: log.source || 'console' })));
+        }
+        if (fileLogs.success && fileLogs.data?.logs?.length) {
+            merged.push(...fileLogs.data.logs.map((log: any) => typeof log === 'string' ? { content: log, source: 'file' } : { ...log, source: 'file' }));
+        }
+        if (runtimeResult.success && runtimeResult.data?.logs?.length) {
+            merged.push(...runtimeResult.data.logs);
+        }
+
+        return {
+            success: true,
+            data: {
+                total: merged.length,
+                returned: merged.length,
+                logs: merged,
+                sources: {
+                    console: consoleLogs.success ? (consoleLogs.data?.returned ?? 0) : 0,
+                    file: fileLogs.success ? (fileLogs.data?.filteredLines ?? 0) : 0,
+                    runtime: runtimeResult.success ? (runtimeResult.data?.returned ?? 0) : 0,
+                },
+            }
+        };
+    }
+
+    private getRuntimeLogs(limit: number, level: string): ToolResponse {
+        const bridge = getGlobalRuntimeBridge();
+        if (!bridge || !bridge.isConnected()) {
+            return { success: true, data: { total: 0, returned: 0, logs: [], note: 'Runtime agent not connected' } };
+        }
+        const logs = bridge.getLogs(limit, level);
+        return { success: true, data: { total: logs.length, returned: logs.length, logs } };
     }
 
     private async getConsoleLogs(limit: number = 100, filter: string = 'all'): Promise<ToolResponse> {
@@ -147,7 +199,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
         const recentLogs = logs.slice(-limit);
 
         if (recentLogs.length === 0) {
-            const projectLogs = await this.getProjectLogs(limit, undefined, filter === 'all' ? 'ALL' : filter);
+            const projectLogs = await this.getProjectLogs(limit, undefined, filter);
             if (projectLogs.success && projectLogs.data) {
                 return {
                     success: true,
@@ -178,7 +230,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
         }
     }
 
-    private async getProjectLogs(lines: number = 100, filterKeyword?: string, logLevel: string = 'ALL'): Promise<ToolResponse> {
+    private async getProjectLogs(lines: number = 100, filterKeyword?: string, logLevel: string = 'all'): Promise<ToolResponse> {
         try {
             const logFilePath = this.findLogFilePath();
             if (!logFilePath) {
@@ -189,10 +241,11 @@ export class DebugToolsV2 extends BaseToolExecutor {
             const logLines = logContent.split('\n').filter(line => line.trim() !== '');
             const recentLines = logLines.slice(-lines);
 
+            const normalizedLevel = (logLevel || 'all').toLowerCase();
             let filteredLines = recentLines;
-            if (logLevel && logLevel !== 'ALL') {
+            if (normalizedLevel !== 'all') {
                 filteredLines = filteredLines.filter(line =>
-                    line.includes(`[${logLevel}]`) || line.includes(logLevel.toLowerCase())
+                    line.toLowerCase().includes(`[${normalizedLevel}]`) || line.toLowerCase().includes(normalizedLevel)
                 );
             }
             if (filterKeyword) {
@@ -207,7 +260,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
                     totalLines: logLines.length,
                     requestedLines: lines,
                     filteredLines: filteredLines.length,
-                    logLevel,
+                    logLevel: normalizedLevel,
                     filterKeyword: filterKeyword || null,
                     logs: filteredLines,
                     logFilePath
@@ -215,34 +268,6 @@ export class DebugToolsV2 extends BaseToolExecutor {
             };
         } catch (error: any) {
             return { success: false, error: `Failed to read project logs: ${error.message}` };
-        }
-    }
-
-    private async getLogFileInfo(): Promise<ToolResponse> {
-        try {
-            const logFilePath = this.findLogFilePath();
-            if (!logFilePath) {
-                return { success: false, error: 'Project log file not found' };
-            }
-
-            const stats = fs.statSync(logFilePath);
-            const logContent = fs.readFileSync(logFilePath, 'utf8');
-            const lineCount = logContent.split('\n').filter(line => line.trim() !== '').length;
-
-            return {
-                success: true,
-                data: {
-                    filePath: logFilePath,
-                    fileSize: stats.size,
-                    fileSizeFormatted: this.formatFileSize(stats.size),
-                    lastModified: stats.mtime.toISOString(),
-                    lineCount,
-                    created: stats.birthtime.toISOString(),
-                    accessible: fs.constants.R_OK
-                }
-            };
-        } catch (error: any) {
-            return { success: false, error: `Failed to get log file info: ${error.message}` };
         }
     }
 
@@ -322,25 +347,37 @@ export class DebugToolsV2 extends BaseToolExecutor {
         return null;
     }
 
-    private formatFileSize(bytes: number): string {
-        const units = ['B', 'KB', 'MB', 'GB'];
-        let size = bytes;
-        let unitIndex = 0;
-        while (size >= 1024 && unitIndex < units.length - 1) {
-            size /= 1024;
-            unitIndex++;
-        }
-        return `${size.toFixed(2)} ${units[unitIndex]}`;
-    }
-
     // ==================== execute ====================
 
     private async handleExecute(args: any): Promise<ToolResponse> {
+        const target = args.target || 'editor';
+
+        if (target === 'runtime') {
+            return this.executeInRuntime(args.script);
+        }
+
+        return this.executeInEditor(args.script);
+    }
+
+    private async executeInRuntime(script: string): Promise<ToolResponse> {
+        const bridge = getGlobalRuntimeBridge();
+        if (!bridge || !bridge.isConnected()) {
+            return { success: false, error: 'Runtime agent not connected. Load the agent in Preview first: in DevTools console run: const s=document.createElement("script");s.src="http://127.0.0.1:<port>/runtime-agent.js";document.head.appendChild(s);' };
+        }
+        try {
+            const data = await bridge.execute(script);
+            return { success: true, data: { result: data } };
+        } catch (err: any) {
+            return { success: false, error: err.message };
+        }
+    }
+
+    private async executeInEditor(script: string): Promise<ToolResponse> {
         return new Promise((resolve) => {
             Editor.Message.request('scene', 'execute-scene-script', {
                 name: 'cocos-mcp-server',
                 method: 'evalScript',
-                args: [args.script]
+                args: [script]
             }).then((result: any) => {
                 if (result === undefined || result === null) {
                     resolve({ success: false, error: 'evalScript method not found. Ensure the plugin scene script is loaded.' });
@@ -371,112 +408,29 @@ export class DebugToolsV2 extends BaseToolExecutor {
     // ==================== inspect ====================
 
     private async handleInspect(args: any): Promise<ToolResponse> {
-        switch (args.action) {
-            case 'node_tree':
-                return await this.getNodeTree(args.uuid, args.depth);
-            case 'performance':
-                return await this.getPerformanceStats();
+        const action = args?.action || 'env';
+        switch (action) {
+            case 'env':
+                return await this.getEditorInfo();
             case 'validate':
                 return await this.validateScene(args);
-            case 'editor_info':
-                return await this.getEditorInfo();
+            case 'runtime_summary':
+                return await this.getRuntimeSummary();
             default:
-                return { success: false, error: `Unknown inspect action: ${args.action}` };
+                return { success: false, error: `Unknown inspect action: ${action}` };
         }
     }
 
-    private async getNodeTree(rootUuid?: string, maxDepth: number = 10): Promise<ToolResponse> {
+    private async getRuntimeSummary(): Promise<ToolResponse> {
+        const bridge = getGlobalRuntimeBridge();
+        if (!bridge || !bridge.isConnected()) {
+            return { success: false, error: 'Runtime agent not connected. Load the agent in Preview first: in DevTools console run: const s=document.createElement("script");s.src="http://127.0.0.1:<port>/runtime-agent.js";document.head.appendChild(s);' };
+        }
         try {
-            const tree = await Editor.Message.request('scene', 'query-node-tree');
-            if (!tree) {
-                return { success: false, error: 'No scene data available' };
-            }
-
-            const buildTree = (node: any, depth: number): any => {
-                if (depth >= maxDepth) return { name: node.name, uuid: node.uuid, truncated: true };
-                return {
-                    uuid: node.uuid,
-                    name: node.name,
-                    active: node.active,
-                    type: node.type,
-                    components: node.__comps__
-                        ? node.__comps__.map((c: any) => this.normalizeComponentType(c.__type__))
-                        : [],
-                    childCount: node.children ? node.children.length : 0,
-                    children: (node.children || []).map((child: any) => buildTree(child, depth + 1))
-                };
-            };
-
-            if (rootUuid) {
-                const findNode = (node: any): any => {
-                    if (node.uuid === rootUuid) return node;
-                    for (const child of (node.children || [])) {
-                        const found = findNode(child);
-                        if (found) return found;
-                    }
-                    return null;
-                };
-                const targetNode = findNode(tree);
-                if (!targetNode) {
-                    return { success: false, error: `Node ${rootUuid} not found in scene` };
-                }
-                return { success: true, data: buildTree(targetNode, 0) };
-            }
-
-            return { success: true, data: buildTree(tree, 0) };
+            const summary = await bridge.getSummary();
+            return this.ok(summary);
         } catch (err: any) {
-            try {
-                const result = await Editor.Message.request('scene', 'execute-scene-script', {
-                    name: 'cocos-mcp-server',
-                    method: 'getSceneHierarchy',
-                    args: [true]
-                });
-                if (result && result.success) {
-                    return { success: true, data: result.data };
-                }
-                return { success: false, error: `query-node-tree failed: ${err.message}` };
-            } catch (err2: any) {
-                return { success: false, error: `Direct API failed: ${err.message}, Scene script failed: ${err2.message}` };
-            }
-        }
-    }
-
-    private normalizeComponentType(rawType: any): string {
-        if (rawType && typeof rawType === 'object') {
-            const nested = rawType.value || rawType.cid || rawType.type || rawType.name;
-            if (nested !== undefined && nested !== null) {
-                return String(nested);
-            }
-        }
-        if (rawType === undefined || rawType === null) {
-            return 'Unknown';
-        }
-        return String(rawType);
-    }
-
-    private async getPerformanceStats(): Promise<ToolResponse> {
-        try {
-            const result = await Editor.Message.request('scene', 'execute-scene-script', {
-                name: 'cocos-mcp-server',
-                method: 'getPerformanceStats',
-                args: []
-            });
-            if (result && result.success) {
-                return result;
-            }
-            return { success: false, error: result?.error || 'Failed to get performance stats from scene process' };
-        } catch (err: any) {
-            return {
-                success: true,
-                data: {
-                    nodeCount: null,
-                    componentCount: null,
-                    drawCalls: null,
-                    triangles: null,
-                    memory: process.memoryUsage(),
-                    note: 'Scene process unavailable, only main process memory data shown'
-                }
-            };
+            return { success: false, error: err.message };
         }
     }
 
@@ -539,16 +493,6 @@ export class DebugToolsV2 extends BaseToolExecutor {
         } catch (err: any) {
             return { success: false, error: err.message };
         }
-    }
-
-    private countNodes(nodes: any[]): number {
-        let count = nodes.length;
-        for (const node of nodes) {
-            if (node.children) {
-                count += this.countNodes(node.children);
-            }
-        }
-        return count;
     }
 
     private async getEditorInfo(): Promise<ToolResponse> {

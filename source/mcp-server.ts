@@ -3,6 +3,8 @@ import * as url from 'url';
 import { MCPClient, MCPServerSettings, ServerStatus, ToolDefinition, ToolExecutor, ToolResponse } from './mcp/interface';
 import { ToolConfig } from './tools/interface';
 import { createToolDefinitions, createToolExecutors } from './services/tool-registry';
+import { RuntimeBridge, setGlobalRuntimeBridge } from './services/runtime-bridge';
+import { getAgentScript } from './runtime-agent/inject-script';
 
 export class MCPServer {
     private settings: MCPServerSettings;
@@ -11,6 +13,7 @@ export class MCPServer {
     private tools: Record<string, ToolExecutor> = {};
     private toolsList: ToolDefinition[] = [];
     private enabledTools: ToolConfig[] = [];
+    private runtimeBridge: RuntimeBridge | null = null;
 
     constructor(settings: MCPServerSettings) {
         this.settings = settings;
@@ -54,6 +57,10 @@ export class MCPServer {
                     reject(err);
                 });
             });
+
+            this.runtimeBridge = new RuntimeBridge();
+            this.runtimeBridge.attach(this.httpServer!);
+            setGlobalRuntimeBridge(this.runtimeBridge);
 
             this.setupTools();
             console.log('[MCPServer] 🚀 MCP Server is ready for connections');
@@ -118,7 +125,18 @@ export class MCPServer {
         }
         
         try {
-            if (pathname === '/mcp' && req.method === 'POST') {
+            if (pathname === '/runtime-agent.js' && req.method === 'GET') {
+                try {
+                    const script = getAgentScript(this.settings.port);
+                    res.setHeader('Content-Type', 'application/javascript');
+                    res.writeHead(200);
+                    res.end(script);
+                } catch (err: any) {
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ error: err.message }));
+                }
+                return;
+            } else if (pathname === '/mcp' && req.method === 'POST') {
                 await this.handleMCPRequest(req, res);
             } else if (pathname === '/health' && req.method === 'GET') {
                 res.writeHead(200);
@@ -252,6 +270,12 @@ export class MCPServer {
     }
 
     public stop(): void {
+        if (this.runtimeBridge) {
+            this.runtimeBridge.detach();
+            setGlobalRuntimeBridge(null);
+            this.runtimeBridge = null;
+        }
+
         if (this.httpServer) {
             this.httpServer.close();
             this.httpServer = null;

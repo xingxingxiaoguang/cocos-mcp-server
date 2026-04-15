@@ -214,7 +214,7 @@ export class MCPToolTester {
             
             // 9. 测试调试工具
             console.log('\n9. 测试编辑器信息...');
-            const editorInfo = await this.callTool('debug_get_editor_info');
+            const editorInfo = await this.callTool('debug_inspect', { action: 'env' });
             console.log('编辑器信息:', JSON.stringify(editorInfo).substring(0, 100) + '...');
             
         } catch (error) {
