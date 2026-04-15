@@ -1,5 +1,6 @@
 import * as http from 'http';
 import * as url from 'url';
+import * as crypto from 'crypto';
 import { MCPClient, MCPServerSettings, ServerStatus, ToolDefinition, ToolExecutor, ToolResponse } from './mcp/interface';
 import { ToolConfig } from './tools/interface';
 import { createToolDefinitions, createToolExecutors } from './services/tool-registry';
@@ -14,6 +15,11 @@ export class MCPServer {
     private toolsList: ToolDefinition[] = [];
     private enabledTools: ToolConfig[] = [];
     private runtimeBridge: RuntimeBridge | null = null;
+
+    // Streamable HTTP session state
+    private sessionId: string | null = null;
+    private initialized = false;
+    private sseStream: http.ServerResponse | null = null;
 
     constructor(settings: MCPServerSettings) {
         this.settings = settings;
@@ -83,11 +89,11 @@ export class MCPServer {
         const parts = toolName.split('_');
         const category = parts[0];
         const toolMethodName = parts.slice(1).join('_');
-        
+
         if (this.tools[category]) {
             return await this.tools[category].execute(toolMethodName, args);
         }
-        
+
         throw new Error(`Tool ${toolName} not found`);
     }
 
@@ -101,103 +107,241 @@ export class MCPServer {
     public updateEnabledTools(enabledTools: ToolConfig[]): void {
         console.log(`[MCPServer] Updating enabled tools: ${enabledTools.length} tools`);
         this.enabledTools = enabledTools;
-        this.setupTools(); // 重新设置工具列表
+        this.setupTools();
     }
 
     public getSettings(): MCPServerSettings {
         return this.settings;
     }
 
+    // ==================== HTTP request routing ====================
+
     private async handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
         const parsedUrl = url.parse(req.url || '', true);
         const pathname = parsedUrl.pathname;
-        
-        // Set CORS headers
+
+        // CORS headers
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-        res.setHeader('Content-Type', 'application/json');
-        
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Mcp-Session-Id, Mcp-Protocol-Version');
+        res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
+
         if (req.method === 'OPTIONS') {
             res.writeHead(200);
             res.end();
             return;
         }
-        
+
         try {
             if (pathname === '/runtime-agent.js' && req.method === 'GET') {
-                try {
-                    const script = getAgentScript(this.settings.port);
-                    res.setHeader('Content-Type', 'application/javascript');
-                    res.writeHead(200);
-                    res.end(script);
-                } catch (err: any) {
-                    res.writeHead(500);
-                    res.end(JSON.stringify({ error: err.message }));
-                }
-                return;
-            } else if (pathname === '/mcp' && req.method === 'POST') {
-                await this.handleMCPRequest(req, res);
+                this.serveRuntimeAgent(res);
+            } else if (pathname === '/mcp') {
+                await this.handleMCPEndpoint(req, res);
             } else if (pathname === '/health' && req.method === 'GET') {
+                res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(JSON.stringify({ status: 'ok', tools: this.toolsList.length }));
             } else if (pathname?.startsWith('/api/') && req.method === 'POST') {
                 await this.handleSimpleAPIRequest(req, res, pathname);
             } else if (pathname === '/api/tools' && req.method === 'GET') {
+                res.setHeader('Content-Type', 'application/json');
                 res.writeHead(200);
                 res.end(JSON.stringify({ tools: this.getSimplifiedToolsList() }));
             } else {
+                res.setHeader('Content-Type', 'application/json');
                 res.writeHead(404);
                 res.end(JSON.stringify({ error: 'Not found' }));
             }
         } catch (error) {
             console.error('HTTP request error:', error);
+            res.setHeader('Content-Type', 'application/json');
             res.writeHead(500);
             res.end(JSON.stringify({ error: 'Internal server error' }));
         }
     }
-    
-    private async handleMCPRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-        let body = '';
-        
-        req.on('data', (chunk) => {
-            body += chunk.toString();
-        });
-        
-        req.on('end', async () => {
+
+    // ==================== MCP Streamable HTTP transport ====================
+
+    private async handleMCPEndpoint(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+        switch (req.method) {
+            case 'POST':
+                await this.handleMCPPost(req, res);
+                break;
+            case 'GET':
+                this.handleMCPGet(req, res);
+                break;
+            case 'DELETE':
+                this.handleMCPDelete(req, res);
+                break;
+            default:
+                res.setHeader('Allow', 'GET, POST, DELETE');
+                this.writeJsonError(res, 405, -32000, 'Method not allowed');
+        }
+    }
+
+    /**
+     * POST /mcp — Handle JSON-RPC requests via SSE stream.
+     * Fallback to plain JSON if client doesn't accept text/event-stream.
+     */
+    private async handleMCPPost(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+        const body = await this.readBody(req);
+        const accept = req.headers.accept || '';
+        const useSse = accept.includes('text/event-stream');
+
+        // Parse JSON-RPC message
+        let message: any;
+        try {
+            message = JSON.parse(body);
+        } catch {
             try {
-                // Enhanced JSON parsing with better error handling
-                let message;
-                try {
-                    message = JSON.parse(body);
-                } catch (parseError: any) {
-                    // Try to fix common JSON issues
-                    const fixedBody = this.fixCommonJsonIssues(body);
-                    try {
-                        message = JSON.parse(fixedBody);
-                        console.log('[MCPServer] Fixed JSON parsing issue');
-                    } catch (secondError) {
-                        throw new Error(`JSON parsing failed: ${parseError.message}. Original body: ${body.substring(0, 500)}...`);
-                    }
-                }
-                
-                const response = await this.handleMessage(message);
-                res.writeHead(200);
-                res.end(JSON.stringify(response));
-            } catch (error: any) {
-                console.error('Error handling MCP request:', error);
-                res.writeHead(400);
-                res.end(JSON.stringify({
-                    jsonrpc: '2.0',
-                    id: null,
-                    error: {
-                        code: -32700,
-                        message: `Parse error: ${error.message}`
-                    }
-                }));
+                message = JSON.parse(this.fixCommonJsonIssues(body));
+            } catch {
+                this.writeJsonError(res, 400, -32700, 'Parse error: Invalid JSON');
+                return;
+            }
+        }
+
+        const isInitReq = message.method === 'initialize';
+        const isNotification = message.method && message.id === undefined;
+
+        // Session validation for non-init requests
+        if (!isInitReq && this.sessionId) {
+            const clientSessionId = req.headers['mcp-session-id'] as string | undefined;
+            if (!clientSessionId) {
+                this.writeJsonError(res, 400, -32000, 'Bad Request: Mcp-Session-Id header is required');
+                return;
+            }
+            if (clientSessionId !== this.sessionId) {
+                this.writeJsonError(res, 404, -32001, 'Session not found');
+                return;
+            }
+        }
+
+        // Handle initialize: generate session
+        if (isInitReq) {
+            this.sessionId = crypto.randomUUID();
+            this.initialized = true;
+        }
+
+        // Notifications have no response — return 202
+        if (isNotification) {
+            if (this.sessionId) {
+                res.setHeader('Mcp-Session-Id', this.sessionId);
+            }
+            res.writeHead(202);
+            res.end();
+            return;
+        }
+
+        // Build the JSON-RPC response
+        const response = await this.handleMessage(message);
+
+        if (useSse) {
+            // SSE streaming response (Streamable HTTP standard)
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
+            res.setHeader('Connection', 'keep-alive');
+            if (this.sessionId) {
+                res.setHeader('Mcp-Session-Id', this.sessionId);
+            }
+            res.writeHead(200);
+            this.writeSSEEvent(res, response);
+            res.end();
+        } else {
+            // Fallback: plain JSON response (backward compatible)
+            res.setHeader('Content-Type', 'application/json');
+            if (this.sessionId) {
+                res.setHeader('Mcp-Session-Id', this.sessionId);
+            }
+            res.writeHead(200);
+            res.end(JSON.stringify(response));
+        }
+    }
+
+    /**
+     * GET /mcp — Open SSE stream for server-initiated messages.
+     */
+    private handleMCPGet(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const accept = req.headers.accept || '';
+        if (!accept.includes('text/event-stream')) {
+            this.writeJsonError(res, 406, -32000, 'Not Acceptable: Client must accept text/event-stream');
+            return;
+        }
+
+        // Session validation
+        if (this.sessionId) {
+            const clientSessionId = req.headers['mcp-session-id'] as string | undefined;
+            if (!clientSessionId || clientSessionId !== this.sessionId) {
+                this.writeJsonError(res, this.initialized ? 404 : 400, -32000, 'Invalid or missing Mcp-Session-Id');
+                return;
+            }
+        }
+
+        // Close existing SSE stream if any
+        if (this.sseStream) {
+            try { this.sseStream.end(); } catch { /* ignore */ }
+        }
+
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        if (this.sessionId) {
+            res.setHeader('Mcp-Session-Id', this.sessionId);
+        }
+        res.writeHead(200);
+
+        this.sseStream = res;
+
+        req.on('close', () => {
+            if (this.sseStream === res) {
+                this.sseStream = null;
             }
         });
     }
+
+    /**
+     * DELETE /mcp — Terminate the session.
+     */
+    private handleMCPDelete(req: http.IncomingMessage, res: http.ServerResponse): void {
+        if (this.sessionId) {
+            const clientSessionId = req.headers['mcp-session-id'] as string | undefined;
+            if (!clientSessionId || clientSessionId !== this.sessionId) {
+                this.writeJsonError(res, 404, -32001, 'Session not found');
+                return;
+            }
+        }
+
+        // Close SSE stream
+        if (this.sseStream) {
+            try { this.sseStream.end(); } catch { /* ignore */ }
+            this.sseStream = null;
+        }
+
+        // Reset session
+        this.sessionId = null;
+        this.initialized = false;
+
+        res.writeHead(200);
+        res.end();
+    }
+
+    // ==================== SSE helpers ====================
+
+    private writeSSEEvent(res: http.ServerResponse, data: any): void {
+        res.write(`event: message\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+
+    private writeJsonError(res: http.ServerResponse, status: number, code: number, message: string): void {
+        res.setHeader('Content-Type', 'application/json');
+        res.writeHead(status);
+        res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code, message },
+            id: null,
+        }));
+    }
+
+    // ==================== JSON-RPC message handling ====================
 
     private async handleMessage(message: any): Promise<any> {
         const { id, method, params } = message;
@@ -209,21 +353,21 @@ export class MCPServer {
                 case 'tools/list':
                     result = { tools: this.getAvailableTools() };
                     break;
-                case 'tools/call':
+                case 'tools/call': {
                     const { name, arguments: args } = params;
                     const toolResult = await this.executeToolCall(name, args);
                     result = { content: [{ type: 'text', text: JSON.stringify(toolResult) }] };
                     break;
+                }
                 case 'initialize':
-                    // MCP initialization
                     result = {
-                        protocolVersion: '2024-11-05',
+                        protocolVersion: '2025-03-26',
                         capabilities: {
                             tools: {}
                         },
                         serverInfo: {
                             name: 'cocos-mcp-server',
-                            version: '1.0.0'
+                            version: '2.0.0'
                         }
                     };
                     break;
@@ -231,45 +375,62 @@ export class MCPServer {
                     throw new Error(`Unknown method: ${method}`);
             }
 
-            return {
-                jsonrpc: '2.0',
-                id,
-                result
-            };
+            return { jsonrpc: '2.0', id, result };
         } catch (error: any) {
             return {
                 jsonrpc: '2.0',
                 id,
-                error: {
-                    code: -32603,
-                    message: error.message
-                }
+                error: { code: -32603, message: error.message }
             };
         }
     }
 
+    // ==================== Utilities ====================
+
+    private readBody(req: http.IncomingMessage): Promise<string> {
+        return new Promise((resolve, reject) => {
+            let body = '';
+            req.on('data', (chunk) => { body += chunk.toString(); });
+            req.on('end', () => resolve(body));
+            req.on('error', reject);
+        });
+    }
+
     private fixCommonJsonIssues(jsonStr: string): string {
-        let fixed = jsonStr;
-        
-        // Fix common escape character issues
-        fixed = fixed
-            // Fix unescaped quotes in strings
+        return jsonStr
             .replace(/([^\\])"([^"]*[^\\])"([^,}\]:])/g, '$1\\"$2\\"$3')
-            // Fix unescaped backslashes
             .replace(/([^\\])\\([^"\\\/bfnrt])/g, '$1\\\\$2')
-            // Fix trailing commas
             .replace(/,(\s*[}\]])/g, '$1')
-            // Fix single quotes (should be double quotes)
             .replace(/'/g, '"')
-            // Fix common control characters
             .replace(/\n/g, '\\n')
             .replace(/\r/g, '\\r')
             .replace(/\t/g, '\\t');
-        
-        return fixed;
     }
 
+    private serveRuntimeAgent(res: http.ServerResponse): void {
+        try {
+            const script = getAgentScript(this.settings.port);
+            res.setHeader('Content-Type', 'application/javascript');
+            res.writeHead(200);
+            res.end(script);
+        } catch (err: any) {
+            res.setHeader('Content-Type', 'application/json');
+            res.writeHead(500);
+            res.end(JSON.stringify({ error: err.message }));
+        }
+    }
+
+    // ==================== Server lifecycle ====================
+
     public stop(): void {
+        if (this.sseStream) {
+            try { this.sseStream.end(); } catch { /* ignore */ }
+            this.sseStream = null;
+        }
+
+        this.sessionId = null;
+        this.initialized = false;
+
         if (this.runtimeBridge) {
             this.runtimeBridge.detach();
             setGlobalRuntimeBridge(null);
@@ -289,125 +450,8 @@ export class MCPServer {
         return {
             running: !!this.httpServer,
             port: this.settings.port,
-            clients: 0 // HTTP is stateless, no persistent clients
+            clients: this.sseStream ? 1 : 0
         };
-    }
-
-    private async handleSimpleAPIRequest(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): Promise<void> {
-        let body = '';
-        
-        req.on('data', (chunk) => {
-            body += chunk.toString();
-        });
-        
-        req.on('end', async () => {
-            try {
-                // Extract tool name from path like /api/node/set_position
-                const pathParts = pathname.split('/').filter(p => p);
-                if (pathParts.length < 3) {
-                    res.writeHead(400);
-                    res.end(JSON.stringify({ error: 'Invalid API path. Use /api/{category}/{tool_name}' }));
-                    return;
-                }
-                
-                const category = pathParts[1];
-                const toolName = pathParts[2];
-                const fullToolName = `${category}_${toolName}`;
-                
-                // Parse parameters with enhanced error handling
-                let params;
-                try {
-                    params = body ? JSON.parse(body) : {};
-                } catch (parseError: any) {
-                    // Try to fix JSON issues
-                    const fixedBody = this.fixCommonJsonIssues(body);
-                    try {
-                        params = JSON.parse(fixedBody);
-                        console.log('[MCPServer] Fixed API JSON parsing issue');
-                    } catch (secondError: any) {
-                        res.writeHead(400);
-                        res.end(JSON.stringify({
-                            error: 'Invalid JSON in request body',
-                            details: parseError.message,
-                            receivedBody: body.substring(0, 200)
-                        }));
-                        return;
-                    }
-                }
-                
-                // Execute tool
-                const result = await this.executeToolCall(fullToolName, params);
-                
-                res.writeHead(200);
-                res.end(JSON.stringify({
-                    success: true,
-                    tool: fullToolName,
-                    result: result
-                }));
-                
-            } catch (error: any) {
-                console.error('Simple API error:', error);
-                res.writeHead(500);
-                res.end(JSON.stringify({
-                    success: false,
-                    error: error.message,
-                    tool: pathname
-                }));
-            }
-        });
-    }
-
-    private getSimplifiedToolsList(): any[] {
-        return this.toolsList.map(tool => {
-            const parts = tool.name.split('_');
-            const category = parts[0];
-            const toolName = parts.slice(1).join('_');
-            
-            return {
-                name: tool.name,
-                category: category,
-                toolName: toolName,
-                description: tool.description,
-                apiPath: `/api/${category}/${toolName}`,
-                curlExample: this.generateCurlExample(category, toolName, tool.inputSchema)
-            };
-        });
-    }
-
-    private generateCurlExample(category: string, toolName: string, schema: any): string {
-        // Generate sample parameters based on schema
-        const sampleParams = this.generateSampleParams(schema);
-        const jsonString = JSON.stringify(sampleParams, null, 2);
-        
-        return `curl -X POST http://127.0.0.1:8585/api/${category}/${toolName} \\
-  -H "Content-Type: application/json" \\
-  -d '${jsonString}'`;
-    }
-
-    private generateSampleParams(schema: any): any {
-        if (!schema || !schema.properties) return {};
-        
-        const sample: any = {};
-        for (const [key, prop] of Object.entries(schema.properties as any)) {
-            const propSchema = prop as any;
-            switch (propSchema.type) {
-                case 'string':
-                    sample[key] = propSchema.default || 'example_string';
-                    break;
-                case 'number':
-                    sample[key] = propSchema.default || 42;
-                    break;
-                case 'boolean':
-                    sample[key] = propSchema.default || true;
-                    break;
-                case 'object':
-                    sample[key] = propSchema.default || { x: 0, y: 0, z: 0 };
-                    break;
-                default:
-                    sample[key] = 'example_value';
-            }
-        }
-        return sample;
     }
 
     public updateSettings(settings: MCPServerSettings) {
@@ -417,7 +461,66 @@ export class MCPServer {
             this.start();
         }
     }
-}
 
-// HTTP transport doesn't need persistent connections
-// MCP over HTTP uses request-response pattern
+    // ==================== Simple REST API (backward compatible) ====================
+
+    private async handleSimpleAPIRequest(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): Promise<void> {
+        const body = await this.readBody(req);
+
+        try {
+            const pathParts = pathname.split('/').filter(p => p);
+            if (pathParts.length < 3) {
+                res.setHeader('Content-Type', 'application/json');
+                res.writeHead(400);
+                res.end(JSON.stringify({ error: 'Invalid API path. Use /api/{category}/{tool_name}' }));
+                return;
+            }
+
+            const category = pathParts[1];
+            const toolName = pathParts[2];
+            const fullToolName = `${category}_${toolName}`;
+
+            let params;
+            try {
+                params = body ? JSON.parse(body) : {};
+            } catch {
+                try {
+                    params = JSON.parse(this.fixCommonJsonIssues(body));
+                } catch (e: any) {
+                    res.setHeader('Content-Type', 'application/json');
+                    res.writeHead(400);
+                    res.end(JSON.stringify({ error: 'Invalid JSON in request body', details: e.message }));
+                    return;
+                }
+            }
+
+            const result = await this.executeToolCall(fullToolName, params);
+
+            res.setHeader('Content-Type', 'application/json');
+            res.writeHead(200);
+            res.end(JSON.stringify({ success: true, tool: fullToolName, result }));
+        } catch (error: any) {
+            console.error('Simple API error:', error);
+            res.setHeader('Content-Type', 'application/json');
+            res.writeHead(500);
+            res.end(JSON.stringify({ success: false, error: error.message, tool: pathname }));
+        }
+    }
+
+    private getSimplifiedToolsList(): any[] {
+        return this.toolsList.map(tool => {
+            const parts = tool.name.split('_');
+            const category = parts[0];
+            const toolName = parts.slice(1).join('_');
+
+            return {
+                name: tool.name,
+                category,
+                toolName,
+                description: tool.description,
+                apiPath: `/api/${category}/${toolName}`,
+                curlExample: `curl -X POST http://127.0.0.1:${this.settings.port}/api/${category}/${toolName} -H "Content-Type: application/json" -d '{}'`
+            };
+        });
+    }
+}
