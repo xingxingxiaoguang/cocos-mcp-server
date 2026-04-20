@@ -205,11 +205,10 @@
                 triangles = root.device.numTris || 0;
             }
 
-            // FPS from game
-            if (cc.game && cc.game._frameTime) {
-                fps = Math.round(1000 / cc.game._frameTime);
-            } else if (cc.director._deltaTime) {
-                fps = Math.round(1 / cc.director._deltaTime);
+            // FPS: use public API getDeltaTime() instead of private _frameTime/_deltaTime
+            var dt = typeof cc.director.getDeltaTime === 'function' ? cc.director.getDeltaTime() : 0;
+            if (dt > 0) {
+                fps = Math.round(1 / dt);
             }
 
             var memory = { jsHeapUsed: 0, jsHeapTotal: 0 };
