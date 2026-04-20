@@ -302,6 +302,10 @@
     var subscriptions = {};
     var subscriptionTickRegistered = false;
     var tickCallback = null;
+    var lastTickTime = 0;
+    var fallbackTimer = null;
+    var FALLBACK_CHECK_INTERVAL = 2000;  // check every 2s
+    var FALLBACK_STALE_THRESHOLD = 3000; // consider stale after 3s
 
     function startSubscription(subId, options) {
         var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
@@ -363,6 +367,7 @@
     function stopAllSubscriptions() {
         var ids = Object.keys(subscriptions);
         for (var i = 0; i < ids.length; i++) stopSubscription(ids[i]);
+        stopFallbackWatchdog();
     }
 
     function ensureTickRegistered(cc) {
@@ -371,6 +376,7 @@
         tickCallback = function () { subscriptionTick(cc); };
         cc.director.on(Director.EVENT_AFTER_UPDATE, tickCallback);
         subscriptionTickRegistered = true;
+        startFallbackWatchdog(cc);
     }
 
     function unregisterTick() {
@@ -382,10 +388,42 @@
         }
         tickCallback = null;
         subscriptionTickRegistered = false;
+        stopFallbackWatchdog();
+    }
+
+    function startFallbackWatchdog(cc) {
+        if (fallbackTimer) return;
+        fallbackTimer = setInterval(function () {
+            // No active subscriptions — nothing to watch
+            if (Object.keys(subscriptions).length === 0) return;
+
+            var now = Date.now();
+            // Tick is still fresh — game loop is running normally
+            if (now - lastTickTime < FALLBACK_STALE_THRESHOLD) return;
+
+            // Check if game is paused
+            var isPaused = false;
+            try {
+                isPaused = cc.game && typeof cc.game.isPaused === 'function' && cc.game.isPaused();
+            } catch (e) { /* ignore */ }
+
+            if (isPaused) {
+                // Drive subscriptionTick via timer fallback
+                subscriptionTick(cc);
+            }
+        }, FALLBACK_CHECK_INTERVAL);
+    }
+
+    function stopFallbackWatchdog() {
+        if (fallbackTimer) {
+            clearInterval(fallbackTimer);
+            fallbackTimer = null;
+        }
     }
 
     function subscriptionTick(cc) {
         var now = Date.now();
+        lastTickTime = now;
         var ids = Object.keys(subscriptions);
 
         for (var i = 0; i < ids.length; i++) {
@@ -609,6 +647,20 @@
                         type: 'event', subId: '__system__',
                         timestamp: new Date().toISOString(),
                         data: { _meta: 'all_subscriptions_cleared', reason: 'scene_change' }
+                    });
+
+                    // Auto-resume game after scene launch — loadScene() calls game.pause() internally
+                    cc.director.once(Director.EVENT_AFTER_SCENE_LAUNCH, function () {
+                        try {
+                            if (cc.game && typeof cc.game.isPaused === 'function' && cc.game.isPaused()) {
+                                cc.game.resume();
+                                send({
+                                    type: 'event', subId: '__system__',
+                                    timestamp: new Date().toISOString(),
+                                    data: { _meta: 'game_auto_resumed', reason: 'after_scene_launch' }
+                                });
+                            }
+                        } catch (e) { /* ignore */ }
                     });
                 });
             }
