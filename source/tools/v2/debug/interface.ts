@@ -29,6 +29,16 @@ export interface RuntimeSummary {
     componentCount: number;
     currentScene: string;
     memory: { jsHeapUsed: number; jsHeapTotal: number };
+    physics: {
+        enabled: boolean;
+        type: '2D' | '3D' | null;
+        gravity: { x: number; y: number; z: number } | null;
+        ptmRatio?: number;
+        allowSleep?: boolean;
+        fixedTimeStep?: number;
+        velocityIterations?: number;
+        positionIterations?: number;
+    };
     errorCount: number;
     uptime: number;
 }

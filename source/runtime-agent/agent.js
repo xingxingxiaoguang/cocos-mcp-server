@@ -224,6 +224,9 @@
                 memory.jsHeapTotal = performance.memory.totalJSHeapSize || 0;
             }
 
+            // Collect physics system info
+            var physics = collectPhysicsInfo(cc);
+
             send({
                 type: 'response',
                 id: id,
@@ -237,6 +240,7 @@
                     componentCount: componentCount,
                     currentScene: scene ? scene.name : null,
                     memory: memory,
+                    physics: physics,
                     errorCount: errorCount,
                     uptime: Math.round((Date.now() - startTime) / 1000)
                 }
@@ -244,6 +248,45 @@
         } catch (err) {
             send({ type: 'response', id: id, success: false, error: err.message || String(err) });
         }
+    }
+
+    function collectPhysicsInfo(cc) {
+        var result = { enabled: false, type: null, gravity: null, ptmRatio: null, allowSleep: null, fixedTimeStep: null, velocityIterations: null, positionIterations: null };
+        try {
+            // Walk _systems to find the physics system (it's not directly on cc)
+            var systems = cc.director._systems;
+            if (!systems) return result;
+            var phys = null;
+            for (var i = 0; i < systems.length; i++) {
+                var s = systems[i];
+                var name = s.constructor ? s.constructor.name : '';
+                if (name === 'PhysicsSystem2D' || name === 'PhysicsSystem') {
+                    phys = s;
+                    break;
+                }
+            }
+            if (!phys) return result;
+
+            var is2D = phys.constructor.name === 'PhysicsSystem2D';
+            result.enabled = phys.enabled !== false;
+            result.type = is2D ? '2D' : '3D';
+
+            // Gravity — Vec3 for 3D, Vec2 for 2D
+            if (phys.gravity) {
+                var g = phys.gravity;
+                result.gravity = { x: g.x || 0, y: g.y || 0, z: g.z || 0 };
+            }
+
+            // 2D-specific properties
+            if (is2D) {
+                if (phys.ptmRatio !== undefined) result.ptmRatio = phys.ptmRatio;
+                if (phys.allowSleep !== undefined) result.allowSleep = phys.allowSleep;
+                if (phys.fixedTimeStep !== undefined) result.fixedTimeStep = phys.fixedTimeStep;
+                if (phys.velocityIterations !== undefined) result.velocityIterations = phys.velocityIterations;
+                if (phys.positionIterations !== undefined) result.positionIterations = phys.positionIterations;
+            }
+        } catch (e) { /* physics info unavailable */ }
+        return result;
     }
 
     function traverseNode(node, callback) {

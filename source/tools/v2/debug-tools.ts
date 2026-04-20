@@ -103,7 +103,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
             },
             {
                 name: 'inspect',
-                description: 'Inspect editor/scene state. action=env (default): get editor environment info. action=validate: validate scene for issues. action=runtime_summary: get preview runtime snapshot (FPS, drawCalls, nodeCount, memory, etc.). For node tree use scene_query action=hierarchy.',
+                description: 'Inspect editor/scene state. action=env (default): get editor environment info. action=validate: validate scene for issues. action=runtime_summary: get preview runtime snapshot (FPS, drawCalls, nodeCount, memory, physics gravity/PTM ratio, etc.). For node tree use scene_query action=hierarchy.',
                 inputSchema: {
                     type: 'object',
                     properties: {
