@@ -29,9 +29,20 @@ export class DebugToolsV2 extends BaseToolExecutor {
         try {
             const msg = Editor.Message as any;
             const listener = (message: any) => {
+                let content: string;
+                if (Array.isArray(message.message)) {
+                    content = message.message.map((arg: any) =>
+                        typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
+                    ).join(' ');
+                } else if (typeof message.message === 'string') {
+                    content = message.message;
+                } else {
+                    content = message.content || String(message);
+                }
+
                 this.addConsoleMessage({
                     type: message.type || 'log',
-                    content: message.message || message.content || String(message),
+                    content: content,
                     source: 'editor'
                 });
             };
