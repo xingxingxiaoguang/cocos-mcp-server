@@ -53,6 +53,7 @@
 
         ws.onclose = function () {
             ws = null;
+            stopAllSubscriptions();
             scheduleReconnect();
         };
 
@@ -143,6 +144,12 @@
                 break;
             case 'get_summary':
                 sendSummary(msg.id);
+                break;
+            case 'subscribe':
+                startSubscription(msg.subId, msg.options);
+                break;
+            case 'unsubscribe':
+                stopSubscription(msg.subId);
                 break;
         }
     }
@@ -289,6 +296,324 @@
 
         return String(obj);
     }
+
+    // ---- Subscription engine ----
+
+    var subscriptions = {};
+    var subscriptionTickRegistered = false;
+    var tickCallback = null;
+
+    function startSubscription(subId, options) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc || !cc.director) {
+            send({ type: 'subscription_error', subId: subId, error: 'cc.director not available' });
+            return;
+        }
+
+        var sub = {
+            id: subId,
+            type: options.type || 'node_watch',
+            properties: options.properties || ['position', 'rotation', 'scale'],
+            threshold: options.threshold || 0,
+            interval: options.interval || 100,
+            duration: options.duration || 0,
+            nodeFilter: options.nodeFilter || {},
+            collisionEvents: options.collisionEvents || ['onCollisionEnter'],
+            lastPush: 0,
+            lastValues: {},
+            durationTimer: null,
+            collisionHandlers: []
+        };
+
+        subscriptions[subId] = sub;
+
+        if (sub.duration > 0) {
+            sub.durationTimer = setTimeout(function () {
+                stopSubscription(subId);
+                send({
+                    type: 'event', subId: subId, subType: sub.type,
+                    timestamp: new Date().toISOString(),
+                    data: { _meta: 'subscription_expired', reason: 'duration' }
+                });
+            }, sub.duration * 1000);
+        }
+
+        if (sub.type === 'collision') {
+            setupCollisionSubscription(sub, cc);
+        }
+
+        ensureTickRegistered(cc);
+    }
+
+    function stopSubscription(subId) {
+        var sub = subscriptions[subId];
+        if (!sub) return;
+        if (sub.durationTimer) clearTimeout(sub.durationTimer);
+        if (sub.collisionHandlers) {
+            for (var i = 0; i < sub.collisionHandlers.length; i++) {
+                var h = sub.collisionHandlers[i];
+                try { if (h.collider && h.collider.isValid) h.collider.off(h.event, h.handler); }
+                catch (e) { /* node may be destroyed */ }
+            }
+        }
+        delete subscriptions[subId];
+        if (Object.keys(subscriptions).length === 0) unregisterTick();
+    }
+
+    function stopAllSubscriptions() {
+        var ids = Object.keys(subscriptions);
+        for (var i = 0; i < ids.length; i++) stopSubscription(ids[i]);
+    }
+
+    function ensureTickRegistered(cc) {
+        if (subscriptionTickRegistered) return;
+        var Director = cc.Director || cc.director.constructor;
+        tickCallback = function () { subscriptionTick(cc); };
+        cc.director.on(Director.EVENT_AFTER_UPDATE, tickCallback);
+        subscriptionTickRegistered = true;
+    }
+
+    function unregisterTick() {
+        if (!subscriptionTickRegistered) return;
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (cc && cc.director) {
+            var Director = cc.Director || cc.director.constructor;
+            cc.director.off(Director.EVENT_AFTER_UPDATE, tickCallback);
+        }
+        tickCallback = null;
+        subscriptionTickRegistered = false;
+    }
+
+    function subscriptionTick(cc) {
+        var now = Date.now();
+        var ids = Object.keys(subscriptions);
+
+        for (var i = 0; i < ids.length; i++) {
+            var sub = subscriptions[ids[i]];
+            if (!sub || sub.type !== 'node_watch') continue;
+            if (now - sub.lastPush < sub.interval) continue;
+
+            var nodes = findMatchingNodes(cc, sub.nodeFilter);
+            if (nodes.length === 0) continue;
+
+            var events = [];
+            for (var n = 0; n < nodes.length; n++) {
+                var node = nodes[n];
+                if (!node || !node.isValid) continue;
+
+                var nodeKey = node.uuid || node.name;
+                var sampled = sampleNodeProperties(node, sub.properties);
+
+                if (sub.threshold > 0) {
+                    var prev = sub.lastValues[nodeKey];
+                    if (prev && !hasChangedBeyondThreshold(prev, sampled, sub.threshold)) continue;
+                }
+
+                sub.lastValues[nodeKey] = sampled;
+                events.push({ nodeId: nodeKey, nodeName: node.name, data: sampled });
+            }
+
+            if (events.length > 0) {
+                sub.lastPush = now;
+                send({
+                    type: 'event',
+                    subId: sub.id,
+                    subType: 'node_watch',
+                    timestamp: new Date().toISOString(),
+                    events: events
+                });
+            }
+        }
+    }
+
+    function findMatchingNodes(cc, filter) {
+        var scene = cc.director.getScene();
+        if (!scene) return [];
+
+        if (filter.uuid) {
+            var found = [];
+            traverseNode(scene, function (node) {
+                if (node.uuid === filter.uuid) found.push(node);
+            });
+            return found;
+        }
+
+        if (filter.path) {
+            var node = findNodeByPath(scene, filter.path);
+            return node ? [node] : [];
+        }
+
+        if (filter.name) {
+            var matches = [];
+            var nameFilter = filter.name;
+            traverseNode(scene, function (node) {
+                if (node.name && node.name.indexOf(nameFilter) !== -1) matches.push(node);
+            });
+            return matches.slice(0, 20);
+        }
+
+        return [];
+    }
+
+    function findNodeByPath(root, pathStr) {
+        var parts = pathStr.split('/');
+        var current = root;
+        for (var i = 0; i < parts.length; i++) {
+            if (!current || !current.children) return null;
+            var found = null;
+            for (var c = 0; c < current.children.length; c++) {
+                if (current.children[c].name === parts[i]) { found = current.children[c]; break; }
+            }
+            if (!found) return null;
+            current = found;
+        }
+        return current;
+    }
+
+    function sampleNodeProperties(node, properties) {
+        var result = {};
+        for (var i = 0; i < properties.length; i++) {
+            var prop = properties[i];
+            try {
+                switch (prop) {
+                    case 'position':
+                        var wp = node.worldPosition;
+                        result.position = { x: wp.x, y: wp.y, z: wp.z };
+                        break;
+                    case 'localPosition':
+                        var lp = node.position;
+                        result.localPosition = { x: lp.x, y: lp.y, z: lp.z };
+                        break;
+                    case 'rotation':
+                        var wr = node.worldRotation;
+                        result.rotation = { x: wr.x, y: wr.y, z: wr.z, w: wr.w };
+                        break;
+                    case 'localRotation':
+                        var lr = node.rotation;
+                        result.localRotation = { x: lr.x, y: lr.y, z: lr.z, w: lr.w };
+                        break;
+                    case 'scale':
+                        var ws = node.worldScale;
+                        result.scale = { x: ws.x, y: ws.y, z: ws.z };
+                        break;
+                    case 'localScale':
+                        var ls = node.scale;
+                        result.localScale = { x: ls.x, y: ls.y, z: ls.z };
+                        break;
+                    case 'active':
+                        result.active = node.active;
+                        break;
+                    case 'eulerAngles':
+                        var ea = node.eulerAngles;
+                        result.eulerAngles = { x: ea.x, y: ea.y, z: ea.z };
+                        break;
+                    case 'childCount':
+                        result.childCount = node.children ? node.children.length : 0;
+                        break;
+                    default:
+                        var val = node[prop];
+                        if (val !== undefined && typeof val !== 'function') {
+                            result[prop] = safeClone(val, 2);
+                        }
+                        break;
+                }
+            } catch (e) {
+                result[prop] = '[error: ' + e.message + ']';
+            }
+        }
+        return result;
+    }
+
+    function hasChangedBeyondThreshold(prevValues, currentValues, threshold) {
+        var keys = Object.keys(currentValues);
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var prev = prevValues[key];
+            var curr = currentValues[key];
+
+            if (prev === undefined) return true;
+
+            if (typeof curr === 'object' && curr !== null && typeof prev === 'object' && prev !== null) {
+                var components = Object.keys(curr);
+                for (var c = 0; c < components.length; c++) {
+                    var comp = components[c];
+                    if (typeof curr[comp] === 'number' && typeof prev[comp] === 'number') {
+                        if (Math.abs(curr[comp] - prev[comp]) > threshold) return true;
+                    }
+                }
+            } else if (typeof curr === 'number' && typeof prev === 'number') {
+                if (Math.abs(curr - prev) > threshold) return true;
+            } else if (curr !== prev) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function setupCollisionSubscription(sub, cc) {
+        var nodes = findMatchingNodes(cc, sub.nodeFilter);
+
+        for (var n = 0; n < nodes.length; n++) {
+            var node = nodes[n];
+            if (!node || !node.isValid) continue;
+
+            var colliders = [];
+            try { colliders = colliders.concat(node.getComponents('cc.Collider2D') || []); } catch (e) {}
+            try { colliders = colliders.concat(node.getComponents('cc.Collider') || []); } catch (e) {}
+
+            for (var ci = 0; ci < colliders.length; ci++) {
+                var collider = colliders[ci];
+                for (var ei = 0; ei < sub.collisionEvents.length; ei++) {
+                    (function (subRef, eventName, col, nodeRef) {
+                        var handler = function (selfCollider, otherCollider) {
+                            var now = Date.now();
+                            if (now - subRef.lastPush < subRef.interval) return;
+                            subRef.lastPush = now;
+
+                            send({
+                                type: 'event',
+                                subId: subRef.id,
+                                subType: 'collision',
+                                timestamp: new Date().toISOString(),
+                                nodeId: nodeRef.uuid || nodeRef.name,
+                                data: {
+                                    event: eventName,
+                                    selfNode: nodeRef.name,
+                                    otherNode: otherCollider && otherCollider.node ? otherCollider.node.name : 'unknown',
+                                    selfPosition: nodeRef.worldPosition ? {
+                                        x: nodeRef.worldPosition.x,
+                                        y: nodeRef.worldPosition.y,
+                                        z: nodeRef.worldPosition.z
+                                    } : null
+                                }
+                            });
+                        };
+                        col.on(eventName, handler);
+                        subRef.collisionHandlers.push({ collider: col, event: eventName, handler: handler });
+                    })(sub, sub.collisionEvents[ei], collider, node);
+                }
+            }
+        }
+    }
+
+    // Auto-cleanup subscriptions on scene change
+    (function () {
+        var check = setInterval(function () {
+            var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+            if (cc && cc.director) {
+                clearInterval(check);
+                var Director = cc.Director || cc.director.constructor;
+                cc.director.on(Director.EVENT_BEFORE_SCENE_LAUNCH, function () {
+                    stopAllSubscriptions();
+                    send({
+                        type: 'event', subId: '__system__',
+                        timestamp: new Date().toISOString(),
+                        data: { _meta: 'all_subscriptions_cleared', reason: 'scene_change' }
+                    });
+                });
+            }
+        }, 500);
+    })();
 
     // ---- Start ----
     connect();

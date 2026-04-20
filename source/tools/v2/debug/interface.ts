@@ -32,3 +32,40 @@ export interface RuntimeSummary {
     errorCount: number;
     uptime: number;
 }
+
+// ---- Subscription system ----
+
+export type SubscriptionType = 'node_watch' | 'collision';
+
+export interface NodeFilter {
+    name?: string;
+    path?: string;
+    uuid?: string;
+}
+
+export interface SubscriptionOptions {
+    type: SubscriptionType;
+    properties?: string[];
+    threshold?: number;
+    interval?: number;
+    duration?: number;
+    nodeFilter?: NodeFilter;
+    collisionEvents?: string[];
+}
+
+export interface SubscriptionEvent {
+    subId: string;
+    timestamp: string;
+    type: SubscriptionType;
+    nodeId?: string;
+    data: Record<string, any>;
+}
+
+export interface SubscriptionInfo {
+    id: string;
+    type: SubscriptionType;
+    status: 'active' | 'stopped' | 'error';
+    options: SubscriptionOptions;
+    createdAt: string;
+    eventCount: number;
+}

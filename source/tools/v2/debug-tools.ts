@@ -1,5 +1,5 @@
 import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
-import { ConsoleMessage, ValidationIssue, ValidationResult } from './debug/interface';
+import { ConsoleMessage, ValidationIssue, ValidationResult, SubscriptionOptions } from './debug/interface';
 import { getGlobalRuntimeBridge } from '../../services/runtime-bridge';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,6 +17,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
         logs: async (args: any) => this.handleLogs(args),
         execute: async (args: any) => this.handleExecute(args),
         inspect: async (args: any) => this.handleInspect(args),
+        monitor: async (args: any) => this.handleMonitor(args),
     };
 
     constructor() {
@@ -114,6 +115,65 @@ export class DebugToolsV2 extends BaseToolExecutor {
                         checkMissingAssets: { type: 'boolean', description: 'Check missing assets for action=validate' },
                         checkPerformance: { type: 'boolean', description: 'Check performance for action=validate' }
                     }
+                }
+            },
+            {
+                name: 'monitor',
+                description: 'Subscribe to runtime events for continuous monitoring. action=subscribe: start watching nodes or collision events with filtering. action=unsubscribe: stop a subscription. action=list: show active subscriptions. action=query_events: retrieve buffered events (consume semantics). action=clear_events: discard buffered events.',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        action: {
+                            type: 'string',
+                            enum: ['subscribe', 'unsubscribe', 'list', 'query_events', 'clear_events'],
+                            description: 'Operation type'
+                        },
+                        subscriptionType: {
+                            type: 'string',
+                            enum: ['node_watch', 'collision'],
+                            description: 'For subscribe. node_watch: periodic property sampling. collision: event-driven collision detection.'
+                        },
+                        nodeFilter: {
+                            type: 'object',
+                            description: 'For subscribe. How to select target nodes.',
+                            properties: {
+                                name: { type: 'string', description: 'Match nodes by name (substring)' },
+                                path: { type: 'string', description: 'Match node by path (e.g., "Canvas/Player")' },
+                                uuid: { type: 'string', description: 'Match specific node by UUID' }
+                            }
+                        },
+                        properties: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'For subscribe, type=node_watch. Properties to sample: position, localPosition, rotation, localRotation, scale, localScale, active, eulerAngles, childCount. Default: ["position", "rotation", "scale"]'
+                        },
+                        threshold: {
+                            type: 'number',
+                            description: 'For subscribe. Only push when value changes beyond this amount. 0 = push every interval. Default: 0'
+                        },
+                        interval: {
+                            type: 'number',
+                            description: 'For subscribe. Minimum push interval in ms. Default: 100'
+                        },
+                        duration: {
+                            type: 'number',
+                            description: 'For subscribe. Auto-stop after N seconds. 0 = no auto-stop. Default: 0'
+                        },
+                        collisionEvents: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'For subscribe, type=collision. Events: onCollisionEnter, onCollisionStay, onCollisionExit, onBeginContact, onEndContact. Default: ["onCollisionEnter"]'
+                        },
+                        subId: {
+                            type: 'string',
+                            description: 'Subscription ID (for unsubscribe, query_events, clear_events)'
+                        },
+                        limit: {
+                            type: 'number',
+                            description: 'For query_events. Max events to return. Default: 100'
+                        }
+                    },
+                    required: ['action']
                 }
             }
         ];
@@ -513,5 +573,88 @@ export class DebugToolsV2 extends BaseToolExecutor {
             uptime: process.uptime()
         };
         return this.ok(info);
+    }
+
+    // ==================== monitor ====================
+
+    private async handleMonitor(args: any): Promise<ToolResponse> {
+        const action = args.action;
+        const bridge = getGlobalRuntimeBridge();
+
+        if (!bridge) {
+            return { success: false, error: 'RuntimeBridge not initialized' };
+        }
+
+        switch (action) {
+            case 'subscribe': {
+                if (!bridge.isConnected()) {
+                    return { success: false, error: 'Runtime agent not connected. Load the agent in Preview first.' };
+                }
+                const subType = args.subscriptionType || 'node_watch';
+                if (!args.nodeFilter && subType === 'node_watch') {
+                    return { success: false, error: 'nodeFilter is required for node_watch subscriptions. Provide name, path, or uuid.' };
+                }
+                try {
+                    const options: SubscriptionOptions = {
+                        type: subType,
+                        properties: args.properties,
+                        threshold: args.threshold,
+                        interval: args.interval,
+                        duration: args.duration,
+                        nodeFilter: args.nodeFilter,
+                        collisionEvents: args.collisionEvents,
+                    };
+                    const subId = bridge.subscribe(options);
+                    return this.ok({
+                        subId,
+                        message: `Subscription created. Use action=query_events with subId="${subId}" to retrieve events.`,
+                        options,
+                    });
+                } catch (err: any) {
+                    return { success: false, error: err.message };
+                }
+            }
+
+            case 'unsubscribe': {
+                if (!args.subId) {
+                    return { success: false, error: 'subId is required for unsubscribe' };
+                }
+                const removed = bridge.unsubscribe(args.subId);
+                if (removed) {
+                    return this.okMessage(`Subscription ${args.subId} stopped and removed.`);
+                }
+                return { success: false, error: `Subscription ${args.subId} not found` };
+            }
+
+            case 'list': {
+                const subs = bridge.listSubscriptions();
+                return this.ok({
+                    subscriptions: subs,
+                    totalEvents: bridge.getEventCount(),
+                });
+            }
+
+            case 'query_events': {
+                const limit = args.limit || 100;
+                const events = bridge.getEvents(args.subId, limit);
+                return this.ok({
+                    events,
+                    returned: events.length,
+                    remainingInBuffer: bridge.getEventCount(args.subId),
+                });
+            }
+
+            case 'clear_events': {
+                bridge.clearEvents(args.subId);
+                return this.okMessage(
+                    args.subId
+                        ? `Events cleared for subscription ${args.subId}`
+                        : 'All events cleared'
+                );
+            }
+
+            default:
+                return { success: false, error: `Unknown monitor action: ${action}` };
+        }
     }
 }
