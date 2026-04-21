@@ -79,3 +79,67 @@ export interface SubscriptionInfo {
     createdAt: string;
     eventCount: number;
 }
+
+// ---- Trace system ----
+
+export type TriggerType = 'keyboard' | 'method' | 'property' | 'script';
+
+export interface TriggerAction {
+    type: TriggerType;
+    key?: string;              // for keyboard: e.g. "ArrowUp", "Space"
+    keyCode?: number;          // for keyboard: numeric keyCode
+    componentType?: string;    // for method/property: e.g. "cc.RigidBody2D"
+    method?: string;           // for method: method name to call
+    args?: any[];              // for method: arguments
+    property?: string;         // for property: property name to set
+    value?: any;               // for property: value to set
+    code?: string;             // for script: JS code
+}
+
+export interface TraceSampleOptions {
+    nodeFilter: NodeFilter;
+    properties?: string[];
+    frames?: number;       // sample count, default 5
+    interval?: number;     // ms between samples, default 100
+}
+
+export interface TraceOptions {
+    nodeFilter: NodeFilter;
+    properties?: string[];
+    trigger: TriggerAction;
+    preFrames?: number;    // default 3
+    postFrames?: number;   // default 10
+    interval?: number;     // default 100
+}
+
+export interface CollisionWaitOptions {
+    nodeFilter: NodeFilter;
+    collisionEvents?: string[]; // default ["onCollisionEnter"]
+    timeout?: number;       // seconds, default 5
+}
+
+export interface SamplePoint {
+    frame: number;
+    timestamp: number;
+    data: Record<string, any>;
+}
+
+export interface TraceAnalysis {
+    changedProperties: string[];
+    maxDelta: Record<string, number>;
+    trend: Record<string, string>;  // "increasing" | "decreasing" | "stable" | "fluctuating"
+    summary: string;
+}
+
+export interface GameStateInfo {
+    paused: boolean;
+    fps: number;
+    deltaTime: number;
+    sceneName: string | null;
+    nodeCount: number;
+    physics: {
+        enabled: boolean;
+        type: '2D' | '3D' | null;
+        gravity: { x: number; y: number; z: number } | null;
+    } | null;
+}

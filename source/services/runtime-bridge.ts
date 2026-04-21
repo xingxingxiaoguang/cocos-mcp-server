@@ -1,6 +1,6 @@
 import * as http from 'http';
 import WebSocket from 'ws';
-import { ConsoleMessage, SubscriptionOptions, SubscriptionInfo, SubscriptionEvent } from '../tools/v2/debug/interface';
+import { ConsoleMessage, SubscriptionOptions, SubscriptionInfo, SubscriptionEvent, TraceSampleOptions, TraceOptions, CollisionWaitOptions } from '../tools/v2/debug/interface';
 
 interface PendingRequest {
     resolve: (value: any) => void;
@@ -55,6 +55,7 @@ export class RuntimeBridge {
         this.wss.on('connection', (ws) => {
             // Only allow one agent at a time
             if (this.agent) {
+                console.warn('[RuntimeBridge] Rejecting duplicate agent connection — closing old');
                 this.agent.close();
             }
             this.agent = ws;
@@ -77,6 +78,12 @@ export class RuntimeBridge {
                     for (const info of this.subscriptions.values()) {
                         info.status = 'stopped';
                     }
+                    // Reject all pending requests — they will never get a response
+                    for (const [, req] of this.pending) {
+                        clearTimeout(req.timer);
+                        req.reject(new Error('Runtime agent disconnected'));
+                    }
+                    this.pending.clear();
                     console.log('[RuntimeBridge] Agent disconnected');
                 }
             });
@@ -140,6 +147,37 @@ export class RuntimeBridge {
 
     getSummary(): Promise<any> {
         return this.sendRequest('get_summary', {});
+    }
+
+    // ---- trace ----
+
+    traceSample(options: TraceSampleOptions): Promise<any> {
+        const frames = options.frames ?? 5;
+        const interval = options.interval ?? 100;
+        // frames * interval + 2s buffer
+        const timeout = frames * interval + 2000;
+        return this.sendRequest('trace_sample', { options }, timeout);
+    }
+
+    trace(options: TraceOptions): Promise<any> {
+        const preFrames = options.preFrames ?? 3;
+        const postFrames = options.postFrames ?? 10;
+        const interval = options.interval ?? 100;
+        const totalFrames = preFrames + postFrames + 1;
+        // totalFrames * interval + 3s buffer
+        const timeout = totalFrames * interval + 3000;
+        return this.sendRequest('trace', { options }, timeout);
+    }
+
+    traceCollisionWait(options: CollisionWaitOptions): Promise<any> {
+        const timeoutSec = options.timeout ?? 5;
+        // timeout + 2s buffer, convert to ms
+        const timeout = timeoutSec * 1000 + 2000;
+        return this.sendRequest('collision_wait', { options }, timeout);
+    }
+
+    getGameState(): Promise<any> {
+        return this.sendRequest('game_state', {});
     }
 
     // ---- subscriptions ----
@@ -288,17 +326,18 @@ export class RuntimeBridge {
         }
     }
 
-    private sendRequest(type: string, payload: Record<string, any>): Promise<any> {
+    private sendRequest(type: string, payload: Record<string, any>, timeout?: number): Promise<any> {
         if (!this.isConnected()) {
             return Promise.reject(new Error('Runtime agent not connected. Load the agent script in Preview first: inject <script src="http://127.0.0.1:<port>/runtime-agent.js"></script> into your preview page, or paste this in Preview DevTools console: const s=document.createElement("script");s.src="http://127.0.0.1:<port>/runtime-agent.js";document.head.appendChild(s);'));
         }
 
+        const effectiveTimeout = timeout ?? this.requestTimeout;
         const id = ++this.requestId;
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 this.pending.delete(id);
-                reject(new Error(`Runtime agent request timed out (${this.requestTimeout / 1000}s)`));
-            }, this.requestTimeout);
+                reject(new Error(`Runtime agent request timed out (${effectiveTimeout / 1000}s)`));
+            }, effectiveTimeout);
 
             this.pending.set(id, { resolve, reject, timer });
             this.agent!.send(JSON.stringify({ type, id, ...payload }));

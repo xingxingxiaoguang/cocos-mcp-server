@@ -17,10 +17,14 @@
 
     var PORT = '__PORT__';
     var WS_URL = 'ws://127.0.0.1:' + PORT + '/runtime';
-    var RECONNECT_INTERVAL = 3000;
+    var BASE_RECONNECT_INTERVAL = 3000;
+    var MAX_RECONNECT_INTERVAL = 30000;
+    var reconnectInterval = BASE_RECONNECT_INTERVAL;
+    var reconnectTimer = null;
     var ws = null;
     var errorCount = 0;
     var startTime = Date.now();
+    var connectionStable = false; // true after 5s of being connected
 
     // ---- WebSocket connection ----
 
@@ -33,6 +37,10 @@
         }
 
         ws.onopen = function () {
+            // Reset reconnect backoff on successful connection
+            reconnectInterval = BASE_RECONNECT_INTERVAL;
+            connectionStable = false;
+
             ws.send(JSON.stringify({
                 type: 'ready',
                 info: {
@@ -40,6 +48,11 @@
                     userAgent: navigator.userAgent
                 }
             }));
+
+            // Mark connection as stable after 5 seconds
+            setTimeout(function () {
+                connectionStable = true;
+            }, 5000);
         };
 
         ws.onmessage = function (event) {
@@ -51,9 +64,22 @@
             }
         };
 
-        ws.onclose = function () {
+        ws.onclose = function (event) {
+            var oldWs = ws;
             ws = null;
             stopAllSubscriptions();
+
+            // If we were replaced by a duplicate agent (code 1000 + no error),
+            // use longer backoff to avoid kicking the new agent
+            if (connectionStable) {
+                // Normal unexpected disconnect — reconnect soon
+                reconnectInterval = BASE_RECONNECT_INTERVAL;
+            } else {
+                // Connection was young when closed — likely duplicate agent eviction
+                // Use longer backoff to let the surviving agent keep its connection
+                reconnectInterval = Math.min(reconnectInterval * 2, MAX_RECONNECT_INTERVAL);
+            }
+
             scheduleReconnect();
         };
 
@@ -63,12 +89,15 @@
     }
 
     function scheduleReconnect() {
-        setTimeout(connect, RECONNECT_INTERVAL);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(connect, reconnectInterval);
     }
 
     function send(obj) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(obj));
+        } else if (obj && obj.type === 'response') {
+            origConsole.warn('[CocosMCP] Failed to send response (WebSocket not open), id=' + obj.id);
         }
     }
 
@@ -150,6 +179,18 @@
                 break;
             case 'unsubscribe':
                 stopSubscription(msg.subId);
+                break;
+            case 'trace_sample':
+                doSample(msg.id, msg.options);
+                break;
+            case 'trace':
+                doTrace(msg.id, msg.options);
+                break;
+            case 'collision_wait':
+                doCollisionWait(msg.id, msg.options);
+                break;
+            case 'game_state':
+                doGetGameState(msg.id);
                 break;
         }
     }
@@ -709,6 +750,517 @@
             }
         }, 500);
     })();
+
+    // ---- Trace: sample engine ----
+
+    function doSample(id, options) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc || !cc.director) {
+            send({ type: 'response', id: id, success: false, error: 'cc.director not available' });
+            return;
+        }
+
+        var filter = options.nodeFilter || {};
+        var properties = options.properties || ['position', 'rotation', 'scale'];
+        var frames = options.frames || 5;
+        var interval = options.interval || 100;
+
+        // Pre-validate node existence
+        var nodes = findMatchingNodes(cc, filter);
+        if (nodes.length === 0) {
+            send({ type: 'response', id: id, success: false, error: 'No matching nodes found for filter: ' + JSON.stringify(filter) });
+            return;
+        }
+
+        var samples = [];
+        var frameIndex = 0;
+        var startTime = Date.now();
+
+        function sampleFrame() {
+            try {
+                var frameData = [];
+                for (var n = 0; n < nodes.length; n++) {
+                    var node = nodes[n];
+                    if (!node || !node.isValid) {
+                        frameData.push({ nodeId: null, nodeName: '[destroyed]', data: {} });
+                        continue;
+                    }
+                    frameData.push({
+                        nodeId: node.uuid,
+                        nodeName: node.name,
+                        data: sampleNodeProperties(node, properties)
+                    });
+                }
+                samples.push({ frame: frameIndex, timestamp: Date.now(), nodes: frameData });
+            } catch (e) {
+                samples.push({ frame: frameIndex, timestamp: Date.now(), error: e.message || String(e) });
+            }
+            frameIndex++;
+
+            if (frameIndex < frames) {
+                setTimeout(sampleFrame, interval);
+            } else {
+                finishSample();
+            }
+        }
+
+        function finishSample() {
+            var sampleDuration = Date.now() - startTime;
+            var gamePaused = false;
+            try { gamePaused = cc.game && typeof cc.game.isPaused === 'function' && cc.game.isPaused(); } catch (e) {}
+
+            send({
+                type: 'response',
+                id: id,
+                success: true,
+                data: {
+                    nodeInfo: nodes.map(function (n) { return { name: n.name, uuid: n.uuid }; }),
+                    samples: samples,
+                    gamePaused: gamePaused,
+                    sampleDuration: sampleDuration
+                }
+            });
+        }
+
+        // Start sampling immediately with first frame
+        sampleFrame();
+    }
+
+    // ---- Trace: trigger ----
+
+    function doTrigger(trigger) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc) return { success: false, error: 'cc not available' };
+
+        try {
+            switch (trigger.type) {
+                case 'keyboard': {
+                    var canvas = cc.game.canvas;
+                    if (!canvas) return { success: false, error: 'cc.game.canvas not available' };
+                    var key = trigger.key || 'Space';
+                    var keyCode = trigger.keyCode || 0;
+                    var downEvent = new KeyboardEvent('keydown', { key: key, keyCode: keyCode, bubbles: true });
+                    canvas.dispatchEvent(downEvent);
+                    var upEvent = new KeyboardEvent('keyup', { key: key, keyCode: keyCode, bubbles: true });
+                    canvas.dispatchEvent(upEvent);
+                    return { success: true, data: { triggered: key } };
+                }
+                case 'method': {
+                    // Find nodes that match — trigger uses the same nodeFilter as the trace
+                    // The caller should pass nodes in, but for standalone trigger we search via trigger metadata
+                    if (trigger._nodes) {
+                        var results = [];
+                        for (var i = 0; i < trigger._nodes.length; i++) {
+                            var node = trigger._nodes[i];
+                            if (!node || !node.isValid) continue;
+                            var comp = trigger.componentType ? node.getComponent(trigger.componentType) : null;
+                            if (!comp) {
+                                results.push({ node: node.name, error: 'Component not found: ' + trigger.componentType });
+                                continue;
+                            }
+                            var method = comp[trigger.method];
+                            if (typeof method !== 'function') {
+                                results.push({ node: node.name, error: 'Method not found: ' + trigger.method });
+                                continue;
+                            }
+                            var args = trigger.args || [];
+                            var retVal = method.apply(comp, args);
+                            results.push({ node: node.name, returnValue: safeClone(retVal, 2) });
+                        }
+                        return { success: true, data: { results: results } };
+                    }
+                    return { success: false, error: 'No target nodes for method trigger' };
+                }
+                case 'property': {
+                    if (trigger._nodes) {
+                        var results = [];
+                        for (var i = 0; i < trigger._nodes.length; i++) {
+                            var node = trigger._nodes[i];
+                            if (!node || !node.isValid) continue;
+                            var comp = trigger.componentType ? node.getComponent(trigger.componentType) : null;
+                            if (!comp) {
+                                results.push({ node: node.name, error: 'Component not found: ' + trigger.componentType });
+                                continue;
+                            }
+                            comp[trigger.property] = trigger.value;
+                            results.push({ node: node.name, set: true, property: trigger.property });
+                        }
+                        return { success: true, data: { results: results } };
+                    }
+                    return { success: false, error: 'No target nodes for property trigger' };
+                }
+                case 'script': {
+                    var fn = new Function('cc', 'return (function(){ ' + trigger.code + ' })()');
+                    var result = fn(cc);
+                    return { success: true, data: { result: safeClone(result, 2) } };
+                }
+                default:
+                    return { success: false, error: 'Unknown trigger type: ' + trigger.type };
+            }
+        } catch (err) {
+            return { success: false, error: err.message || String(err) };
+        }
+    }
+
+    // ---- Trace: main trace function ----
+
+    function doTrace(id, options) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc || !cc.director) {
+            send({ type: 'response', id: id, success: false, error: 'cc.director not available' });
+            return;
+        }
+
+        var filter = options.nodeFilter || {};
+        var properties = options.properties || ['position', 'rotation', 'scale'];
+        var trigger = options.trigger;
+        var preFrames = options.preFrames != null ? options.preFrames : 3;
+        var postFrames = options.postFrames != null ? options.postFrames : 10;
+        var interval = options.interval || 100;
+
+        if (!trigger) {
+            send({ type: 'response', id: id, success: false, error: 'trigger is required for trace action' });
+            return;
+        }
+
+        // Pre-validate node existence
+        var nodes = findMatchingNodes(cc, filter);
+        if (nodes.length === 0) {
+            send({ type: 'response', id: id, success: false, error: 'No matching nodes found for filter: ' + JSON.stringify(filter) });
+            return;
+        }
+
+        // Check game paused, auto-resume if needed
+        var wasPaused = false;
+        try {
+            if (cc.game && typeof cc.game.isPaused === 'function' && cc.game.isPaused()) {
+                wasPaused = true;
+                cc.game.resume();
+            }
+        } catch (e) {}
+
+        var samples = [];
+        var frameIndex = 0;
+        var triggerFired = false;
+        var savedTriggerResult = null;
+        var startTime = Date.now();
+
+        // Inject nodes into trigger for method/property types
+        if (trigger.type === 'method' || trigger.type === 'property') {
+            trigger._nodes = nodes;
+        }
+
+        function collectFrameData() {
+            var frameData = [];
+            for (var n = 0; n < nodes.length; n++) {
+                var node = nodes[n];
+                if (!node || !node.isValid) {
+                    frameData.push({ nodeId: null, nodeName: '[destroyed]', data: {} });
+                    continue;
+                }
+                frameData.push({
+                    nodeId: node.uuid,
+                    nodeName: node.name,
+                    data: sampleNodeProperties(node, properties)
+                });
+            }
+            return frameData;
+        }
+
+        function traceFrame() {
+            try {
+                // Fire trigger at the preFrames boundary
+                if (frameIndex === preFrames && !triggerFired) {
+                    triggerFired = true;
+                    savedTriggerResult = doTrigger(trigger);
+                    samples.push({
+                        frame: frameIndex,
+                        timestamp: Date.now(),
+                        nodes: collectFrameData(),
+                        triggerFrame: true,
+                        triggerResult: savedTriggerResult
+                    });
+                    frameIndex++;
+                    setTimeout(traceFrame, interval);
+                    return;
+                }
+
+                // All frames collected — send final response
+                if (frameIndex > preFrames + postFrames) {
+                    finishTrace();
+                    return;
+                }
+
+                samples.push({ frame: frameIndex, timestamp: Date.now(), nodes: collectFrameData() });
+            } catch (e) {
+                samples.push({ frame: frameIndex, timestamp: Date.now(), error: e.message || String(e) });
+            }
+            frameIndex++;
+            setTimeout(traceFrame, interval);
+        }
+
+        function finishTrace() {
+            var traceDuration = Date.now() - startTime;
+            var analysis = analyzeSamples(samples, preFrames);
+
+            send({
+                type: 'response',
+                id: id,
+                success: true,
+                data: {
+                    nodeInfo: nodes.map(function (n) { return { name: n.name, uuid: n.uuid }; }),
+                    triggerResult: savedTriggerResult || { success: false, error: 'trigger not fired' },
+                    samples: samples,
+                    analysis: analysis,
+                    wasPaused: wasPaused,
+                    gamePaused: false,
+                    traceDuration: traceDuration
+                }
+            });
+        }
+
+        // Start first frame immediately
+        traceFrame();
+    }
+
+    function analyzeSamples(samples, preFrames) {
+        if (samples.length < 2) {
+            return { changedProperties: [], maxDelta: {}, trend: {}, summary: 'Not enough samples for analysis' };
+        }
+
+        // Collect all property keys from the first sample that has data
+        var propKeys = [];
+        for (var i = 0; i < samples.length; i++) {
+            if (samples[i].nodes && samples[i].nodes.length > 0 && samples[i].nodes[0].data) {
+                propKeys = Object.keys(samples[i].nodes[0].data);
+                break;
+            }
+        }
+
+        var changedProperties = [];
+        var maxDelta = {};
+        var trend = {};
+
+        for (var p = 0; p < propKeys.length; p++) {
+            var prop = propKeys[p];
+            var preValues = [];
+            var postValues = [];
+
+            for (var s = 0; s < samples.length; s++) {
+                if (!samples[s].nodes || samples[s].nodes.length === 0) continue;
+                var val = samples[s].nodes[0].data[prop];
+                if (val === undefined) continue;
+
+                // For object values (position, rotation, etc.), use a numeric summary
+                var numVal = toNumeric(val);
+                if (numVal === null) continue;
+
+                if (s < preFrames) {
+                    preValues.push(numVal);
+                } else {
+                    postValues.push(numVal);
+                }
+            }
+
+            if (preValues.length === 0 || postValues.length === 0) continue;
+
+            var preAvg = avg(preValues);
+            var postAvg = avg(postValues);
+            var delta = Math.abs(postAvg - preAvg);
+
+            maxDelta[prop] = round2(delta);
+
+            if (delta > 0.01) {
+                changedProperties.push(prop);
+            }
+
+            // Determine trend
+            if (postValues.length >= 2) {
+                var increasing = 0, decreasing = 0;
+                for (var j = 1; j < postValues.length; j++) {
+                    if (postValues[j] > postValues[j - 1] + 0.01) increasing++;
+                    else if (postValues[j] < postValues[j - 1] - 0.01) decreasing++;
+                }
+                if (increasing > decreasing && decreasing === 0) trend[prop] = 'increasing';
+                else if (decreasing > increasing && increasing === 0) trend[prop] = 'decreasing';
+                else if (increasing === 0 && decreasing === 0) trend[prop] = 'stable';
+                else trend[prop] = 'fluctuating';
+            } else {
+                trend[prop] = delta > 0.01 ? 'changed' : 'stable';
+            }
+        }
+
+        var summary = changedProperties.length === 0
+            ? 'No significant property changes detected after trigger'
+            : 'Changed properties: ' + changedProperties.join(', ');
+
+        return {
+            changedProperties: changedProperties,
+            maxDelta: maxDelta,
+            trend: trend,
+            summary: summary
+        };
+    }
+
+    function toNumeric(val) {
+        if (typeof val === 'number') return val;
+        if (typeof val === 'boolean') return val ? 1 : 0;
+        if (val && typeof val === 'object') {
+            // Vector-like: compute magnitude
+            var keys = Object.keys(val);
+            var sumSq = 0;
+            var count = 0;
+            for (var i = 0; i < keys.length; i++) {
+                if (typeof val[keys[i]] === 'number') {
+                    sumSq += val[keys[i]] * val[keys[i]];
+                    count++;
+                }
+            }
+            if (count > 0) return Math.sqrt(sumSq);
+        }
+        return null;
+    }
+
+    function avg(arr) {
+        var sum = 0;
+        for (var i = 0; i < arr.length; i++) sum += arr[i];
+        return arr.length > 0 ? sum / arr.length : 0;
+    }
+
+    function round2(n) { return Math.round(n * 100) / 100; }
+
+    // ---- Trace: collision wait ----
+
+    function doCollisionWait(id, options) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc || !cc.director) {
+            send({ type: 'response', id: id, success: false, error: 'cc.director not available' });
+            return;
+        }
+
+        var filter = options.nodeFilter || {};
+        var eventsToListen = options.collisionEvents || ['onCollisionEnter'];
+        var timeout = (options.timeout != null ? options.timeout : 5) * 1000;
+        var startTime = Date.now();
+
+        // Find nodes at call time (handles dynamically created nodes)
+        var nodes = findMatchingNodes(cc, filter);
+        if (nodes.length === 0) {
+            send({ type: 'response', id: id, success: false, error: 'No matching nodes found for filter: ' + JSON.stringify(filter) });
+            return;
+        }
+
+        var resolved = false;
+        var collectedEvents = [];
+        var cleanupList = [];
+
+        function finish(timedOut) {
+            if (resolved) return;
+            resolved = true;
+
+            // Cleanup all handlers
+            for (var i = 0; i < cleanupList.length; i++) {
+                var h = cleanupList[i];
+                try { if (h.collider && h.collider.isValid) h.collider.off(h.event, h.handler); } catch (e) {}
+            }
+
+            send({
+                type: 'response',
+                id: id,
+                success: true,
+                data: {
+                    events: collectedEvents,
+                    timedOut: timedOut,
+                    waitDuration: Date.now() - startTime
+                }
+            });
+        }
+
+        // Register collision handlers on all found nodes
+        for (var n = 0; n < nodes.length; n++) {
+            var node = nodes[n];
+            if (!node || !node.isValid) continue;
+
+            var colliders = [];
+            try { colliders = colliders.concat(node.getComponents('cc.Collider2D') || []); } catch (e) {}
+            try { colliders = colliders.concat(node.getComponents('cc.Collider') || []); } catch (e) {}
+
+            for (var ci = 0; ci < colliders.length; ci++) {
+                var collider = colliders[ci];
+                for (var ei = 0; ei < eventsToListen.length; ei++) {
+                    (function (col, eventName, nodeRef) {
+                        var handler = function (selfCollider, otherCollider) {
+                            if (resolved) return;
+                            collectedEvents.push({
+                                event: eventName,
+                                node: nodeRef.name,
+                                otherNode: otherCollider && otherCollider.node ? otherCollider.node.name : 'unknown',
+                                position: nodeRef.worldPosition ? {
+                                    x: nodeRef.worldPosition.x,
+                                    y: nodeRef.worldPosition.y,
+                                    z: nodeRef.worldPosition.z
+                                } : null,
+                                timestamp: Date.now()
+                            });
+                            // Return on first collision event
+                            finish(false);
+                        };
+                        col.on(eventName, handler);
+                        cleanupList.push({ collider: col, event: eventName, handler: handler });
+                    })(collider, eventsToListen[ei], node);
+                }
+            }
+        }
+
+        // Timeout
+        setTimeout(function () { finish(true); }, timeout);
+    }
+
+    // ---- Trace: game state ----
+
+    function doGetGameState(id) {
+        var cc = window.cc || (typeof require === 'function' ? require('cc') : null);
+        if (!cc || !cc.director) {
+            send({ type: 'response', id: id, success: false, error: 'cc.director not available' });
+            return;
+        }
+
+        var paused = false;
+        try { paused = cc.game && typeof cc.game.isPaused === 'function' && cc.game.isPaused(); } catch (e) {}
+
+        var dt = typeof cc.director.getDeltaTime === 'function' ? cc.director.getDeltaTime() : 0;
+        var fps = dt > 0 ? Math.round(1 / dt) : 0;
+
+        var scene = cc.director.getScene();
+        var nodeCount = 0;
+        if (scene) {
+            traverseNode(scene, function () { nodeCount++; });
+        }
+
+        var physics = null;
+        try {
+            var physInfo = collectPhysicsInfo(cc);
+            physics = {
+                enabled: physInfo.enabled,
+                type: physInfo.type,
+                gravity: physInfo.gravity
+            };
+        } catch (e) {}
+
+        send({
+            type: 'response',
+            id: id,
+            success: true,
+            data: {
+                paused: paused,
+                fps: fps,
+                deltaTime: dt,
+                sceneName: scene ? scene.name : null,
+                nodeCount: nodeCount,
+                physics: physics
+            }
+        });
+    }
 
     // ---- Start ----
     connect();

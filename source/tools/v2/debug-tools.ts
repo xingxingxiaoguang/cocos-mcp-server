@@ -1,5 +1,5 @@
 import { BaseToolExecutor, ToolHandler, ToolDefinition, ToolResponse } from '../base-tool';
-import { ConsoleMessage, ValidationIssue, ValidationResult, SubscriptionOptions } from './debug/interface';
+import { ConsoleMessage, ValidationIssue, ValidationResult, SubscriptionOptions, TraceSampleOptions, TraceOptions, CollisionWaitOptions } from './debug/interface';
 import { getGlobalRuntimeBridge } from '../../services/runtime-bridge';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -18,6 +18,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
         execute: async (args: any) => this.handleExecute(args),
         inspect: async (args: any) => this.handleInspect(args),
         monitor: async (args: any) => this.handleMonitor(args),
+        trace: async (args: any) => this.handleTrace(args),
     };
 
     constructor() {
@@ -130,7 +131,7 @@ export class DebugToolsV2 extends BaseToolExecutor {
             },
             {
                 name: 'monitor',
-                description: 'Subscribe to runtime events for continuous monitoring. action=subscribe: start watching nodes or collision events with filtering. action=unsubscribe: stop a subscription. action=list: show active subscriptions. action=query_events: retrieve buffered events (consume semantics). action=clear_events: discard buffered events.',
+                description: '[DEPRECATED] Use debug_trace instead. Subscribe to runtime events for continuous monitoring. action=subscribe: start watching nodes or collision events with filtering. action=unsubscribe: stop a subscription. action=list: show active subscriptions. action=query_events: retrieve buffered events (consume semantics). action=clear_events: discard buffered events.',
                 inputSchema: {
                     type: 'object',
                     properties: {
@@ -182,6 +183,83 @@ export class DebugToolsV2 extends BaseToolExecutor {
                         limit: {
                             type: 'number',
                             description: 'For query_events. Max events to return. Default: 100'
+                        }
+                    },
+                    required: ['action']
+                }
+            },
+            {
+                name: 'trace',
+                description: 'Synchronous trigger+sample for runtime debugging. action=sample: pure property sampling on nodes. action=trace: trigger an action (keyboard/method/property/script) and sample before/after to analyze changes. action=collision_wait: synchronously wait for a collision event. action=game_state: get current game state (paused, fps, scene, physics).',
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        action: {
+                            type: 'string',
+                            enum: ['sample', 'trace', 'collision_wait', 'game_state'],
+                            description: 'Operation type. Default: game_state'
+                        },
+                        nodeFilter: {
+                            type: 'object',
+                            description: 'How to select target nodes.',
+                            properties: {
+                                name: { type: 'string', description: 'Match nodes by name (substring)' },
+                                path: { type: 'string', description: 'Match node by path (e.g., "Canvas/Player")' },
+                                uuid: { type: 'string', description: 'Match specific node by UUID' }
+                            }
+                        },
+                        properties: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Properties to sample: position, localPosition, rotation, localRotation, scale, localScale, active, eulerAngles, childCount. Default: ["position", "rotation", "scale"]'
+                        },
+                        frames: {
+                            type: 'number',
+                            description: 'For action=sample. Number of sample frames. Default: 5'
+                        },
+                        interval: {
+                            type: 'number',
+                            description: 'For action=sample/trace. Interval in ms between samples. Default: 100'
+                        },
+                        trigger: {
+                            type: 'object',
+                            description: 'For action=trace. The action to trigger.',
+                            properties: {
+                                type: {
+                                    type: 'string',
+                                    enum: ['keyboard', 'method', 'property', 'script'],
+                                    description: 'Trigger type'
+                                },
+                                key: { type: 'string', description: 'For keyboard: key name (e.g. "ArrowUp", "Space")' },
+                                keyCode: { type: 'number', description: 'For keyboard: numeric keyCode' },
+                                componentType: { type: 'string', description: 'For method/property: component type (e.g. "cc.RigidBody2D")' },
+                                method: { type: 'string', description: 'For method: method name to call' },
+                                args: {
+                                    type: 'array',
+                                    description: 'For method: arguments to pass'
+                                },
+                                property: { type: 'string', description: 'For property: property name to set' },
+                                value: { description: 'For property: value to set' },
+                                code: { type: 'string', description: 'For script: JS code to execute' }
+                            },
+                            required: ['type']
+                        },
+                        preFrames: {
+                            type: 'number',
+                            description: 'For action=trace. Frames to sample before trigger. Default: 3'
+                        },
+                        postFrames: {
+                            type: 'number',
+                            description: 'For action=trace. Frames to sample after trigger. Default: 10'
+                        },
+                        collisionEvents: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'For action=collision_wait. Events to listen for: onCollisionEnter, onCollisionStay, onCollisionExit, onBeginContact, onEndContact. Default: ["onCollisionEnter"]'
+                        },
+                        timeout: {
+                            type: 'number',
+                            description: 'For action=collision_wait. Wait timeout in seconds. Default: 5'
                         }
                     },
                     required: ['action']
@@ -666,6 +744,81 @@ export class DebugToolsV2 extends BaseToolExecutor {
 
             default:
                 return { success: false, error: `Unknown monitor action: ${action}` };
+        }
+    }
+
+    // ==================== trace ====================
+
+    private async handleTrace(args: any): Promise<ToolResponse> {
+        const action = args.action || 'game_state';
+        const bridge = getGlobalRuntimeBridge();
+
+        if (!bridge) {
+            return { success: false, error: 'RuntimeBridge not initialized' };
+        }
+
+        if (!bridge.isConnected()) {
+            return { success: false, error: 'Runtime agent not connected. Load the agent in Preview first.' };
+        }
+
+        try {
+            switch (action) {
+                case 'sample': {
+                    if (!args.nodeFilter) {
+                        return { success: false, error: 'nodeFilter is required for sample action' };
+                    }
+                    const options: TraceSampleOptions = {
+                        nodeFilter: args.nodeFilter,
+                        properties: args.properties,
+                        frames: args.frames,
+                        interval: args.interval,
+                    };
+                    const data = await bridge.traceSample(options);
+                    return this.ok(data);
+                }
+
+                case 'trace': {
+                    if (!args.nodeFilter) {
+                        return { success: false, error: 'nodeFilter is required for trace action' };
+                    }
+                    if (!args.trigger) {
+                        return { success: false, error: 'trigger is required for trace action' };
+                    }
+                    const options: TraceOptions = {
+                        nodeFilter: args.nodeFilter,
+                        properties: args.properties,
+                        trigger: args.trigger,
+                        preFrames: args.preFrames,
+                        postFrames: args.postFrames,
+                        interval: args.interval,
+                    };
+                    const data = await bridge.trace(options);
+                    return this.ok(data);
+                }
+
+                case 'collision_wait': {
+                    if (!args.nodeFilter) {
+                        return { success: false, error: 'nodeFilter is required for collision_wait action' };
+                    }
+                    const options: CollisionWaitOptions = {
+                        nodeFilter: args.nodeFilter,
+                        collisionEvents: args.collisionEvents,
+                        timeout: args.timeout,
+                    };
+                    const data = await bridge.traceCollisionWait(options);
+                    return this.ok(data);
+                }
+
+                case 'game_state': {
+                    const data = await bridge.getGameState();
+                    return this.ok(data);
+                }
+
+                default:
+                    return { success: false, error: `Unknown trace action: ${action}` };
+            }
+        } catch (err: any) {
+            return { success: false, error: err.message };
         }
     }
 }
