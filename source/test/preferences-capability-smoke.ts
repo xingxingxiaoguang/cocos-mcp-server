@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
-import { RuntimeProfile } from '../runtime/profile';
-import { PreferencesBridgeDriver } from '../editor-bridge/preferences/contract';
+import { createCapabilityRegistry } from '../core/capability-registry';
+import { RuntimeProfile } from '../core/profile';
+import { PreferencesBridgeDriver } from '../drivers/preferences/contract';
 
 class MockPreferencesDriver implements PreferencesBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];

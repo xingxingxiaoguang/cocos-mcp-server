@@ -1,4 +1,4 @@
-import { JsonValue } from '../../json';
+import { JsonValue } from '../../utils/json';
 
 export interface ProjectCapability {
     // Queries

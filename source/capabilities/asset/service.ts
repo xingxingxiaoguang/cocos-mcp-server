@@ -20,7 +20,7 @@ import {
     AssetDeleteResult,
     AssetRefreshResult,
 } from './interface';
-import { AssetBridgeDriver } from '../../editor-bridge/asset/contract';
+import { AssetBridgeDriver } from '../../drivers/asset/contract';
 import * as path from 'path';
 
 export class AssetService implements AssetCapability {

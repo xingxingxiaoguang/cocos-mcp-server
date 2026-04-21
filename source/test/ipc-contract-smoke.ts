@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import * as ipcClient from '../ipc/client';
+import * as ipcClient from '../ui/ipc/client';
 import {
     createToolManagerState,
     IPC_CHANNEL,
@@ -9,7 +9,7 @@ import {
     IPC_MESSAGES,
     TOOL_MANAGER_STATE_KEYS,
     ToolStatusUpdate,
-} from '../ipc/contracts';
+} from '../ui/ipc/contracts';
 
 type MessageRequestCall = {
     channel: string;

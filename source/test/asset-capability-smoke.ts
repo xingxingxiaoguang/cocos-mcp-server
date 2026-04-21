@@ -11,9 +11,9 @@ import {
     AssetQueryInput,
     AssetSaveInput,
     AssetSaveMetaInput,
-} from '../editor-bridge/asset/contract';
-import { RuntimeProfile } from '../runtime/profile';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
+} from '../drivers/asset/contract';
+import { RuntimeProfile } from '../core/profile';
+import { createCapabilityRegistry } from '../core/capability-registry';
 
 class MockAssetDriver implements AssetBridgeDriver {
     public readonly calls: Array<{ method: string; args: unknown[] }> = [];

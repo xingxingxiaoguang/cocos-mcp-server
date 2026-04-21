@@ -14,7 +14,7 @@ import {
     ComponentModifyInput,
     ComponentModifyResult,
 } from './interface';
-import { ComponentBridgeDriver, NormalizedComponent } from '../../editor-bridge/component/contract';
+import { ComponentBridgeDriver, NormalizedComponent } from '../../drivers/component/contract';
 import { safeSerialize } from '../../utils/serializer';
 
 export class ComponentService implements ComponentCapability {

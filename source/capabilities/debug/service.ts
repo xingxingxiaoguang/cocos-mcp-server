@@ -14,7 +14,7 @@ import type {
     CollisionWaitOptions,
     GameStateInfo,
 } from './interface';
-import type { DebugBridgeDriver } from '../../editor-bridge/debug/contract';
+import type { DebugBridgeDriver } from '../../drivers/debug/contract';
 
 const PERSIST_WARNING =
     'Runtime edits made through debug_execute are not persisted by scene_save. Use component_modify for persistent changes.';

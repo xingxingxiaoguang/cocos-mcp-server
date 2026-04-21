@@ -18,7 +18,7 @@ import {
     NodeSearchResult,
 } from './interface';
 import { ComponentCapability, ComponentAddResult } from '../component/interface';
-import { NodeBridgeDriver } from '../../editor-bridge/node/contract';
+import { NodeBridgeDriver } from '../../drivers/node/contract';
 
 export class NodeService implements NodeCapability {
     constructor(

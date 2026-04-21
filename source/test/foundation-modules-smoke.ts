@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import { ToolDefinition, ToolResponse } from '../mcp/interface';
-import { BaseToolExecutor } from '../tools/base-tool';
+import { BaseToolExecutor } from '../tools/base';
 import { actionEnum, path as pathSchema, uuid as uuidSchema } from '../utils/schemas';
 import { makeError, normalizeUnknownError, ToolErrorCode } from '../utils/error-codes';
 import { safeSerialize } from '../utils/serializer';

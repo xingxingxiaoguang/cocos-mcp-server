@@ -10,7 +10,7 @@ import {
     QuerySceneHierarchyInput,
     SaveSceneAsInput,
 } from './interface';
-import { SceneBridgeDriver } from '../../editor-bridge/scene/contract';
+import { SceneBridgeDriver } from '../../drivers/scene/contract';
 
 export class SceneService implements SceneCapability {
     constructor(private readonly driver: SceneBridgeDriver) {}

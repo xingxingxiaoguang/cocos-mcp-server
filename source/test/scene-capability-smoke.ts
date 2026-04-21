@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { SceneBridgeDriver } from '../editor-bridge/scene/contract';
-import { RuntimeProfile } from '../runtime/profile';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
+import { SceneBridgeDriver } from '../drivers/scene/contract';
+import { RuntimeProfile } from '../core/profile';
+import { createCapabilityRegistry } from '../core/capability-registry';
 
 class MockSceneDriver implements SceneBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];

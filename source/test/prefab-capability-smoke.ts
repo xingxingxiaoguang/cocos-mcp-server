@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { PrefabBridgeDriver } from '../editor-bridge/prefab/contract';
-import { RuntimeProfile } from '../runtime/profile';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
+import { PrefabBridgeDriver } from '../drivers/prefab/contract';
+import { RuntimeProfile } from '../core/profile';
+import { createCapabilityRegistry } from '../core/capability-registry';
 
 class MockPrefabDriver implements PrefabBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];

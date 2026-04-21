@@ -18,9 +18,9 @@ import {
     SceneClassesResult,
     SceneComponentsResult,
     SpriteStateResult,
-} from '../editor-bridge/component/contract';
-import { RuntimeProfile } from '../runtime/profile';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
+} from '../drivers/component/contract';
+import { RuntimeProfile } from '../core/profile';
+import { createCapabilityRegistry } from '../core/capability-registry';
 
 class MockComponentDriver implements ComponentBridgeDriver {
     public readonly calls: Array<{ method: string; args: unknown[] }> = [];

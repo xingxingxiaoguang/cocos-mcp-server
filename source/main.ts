@@ -1,9 +1,9 @@
 import { MCPServerSettings } from './mcp/interface';
-import { ToolManager } from './tools/tool-manager';
-import { ToolStatusUpdate } from './ipc/contracts';
-import { ServerController } from './services/server-controller';
-import { SettingsRepository } from './services/settings-repository';
-import { ToolConfigService } from './services/tool-config-service';
+import { ToolManager } from './config/tool-manager';
+import { ToolStatusUpdate } from './ui/ipc/contracts';
+import { ServerController } from './mcp/server-controller';
+import { SettingsRepository } from './config/repository';
+import { ToolConfigService } from './config/tool-config-service';
 
 let serverController: ServerController;
 let toolManager: ToolManager;

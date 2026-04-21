@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
-import { RuntimeProfile } from '../runtime/profile';
-import { ProjectBridgeDriver } from '../editor-bridge/project/contract';
+import { createCapabilityRegistry } from '../core/capability-registry';
+import { RuntimeProfile } from '../core/profile';
+import { ProjectBridgeDriver } from '../drivers/project/contract';
 
 class MockProjectDriver implements ProjectBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];

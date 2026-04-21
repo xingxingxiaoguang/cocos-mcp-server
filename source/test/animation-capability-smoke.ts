@@ -1,7 +1,7 @@
 import * as assert from 'assert';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
-import { RuntimeProfile } from '../runtime/profile';
-import { AnimationBridgeDriver } from '../editor-bridge/animation/contract';
+import { createCapabilityRegistry } from '../core/capability-registry';
+import { RuntimeProfile } from '../core/profile';
+import { AnimationBridgeDriver } from '../drivers/animation/contract';
 
 class MockAnimationDriver implements AnimationBridgeDriver {
     public readonly calls: Array<{ method: string; args: any[] }> = [];

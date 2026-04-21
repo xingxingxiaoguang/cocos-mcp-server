@@ -1,6 +1,6 @@
-import { JsonValue } from '../../json';
+import { JsonValue } from '../../utils/json';
 import { safeSerialize } from '../../utils/serializer';
-import { ProjectBridgeDriver } from '../../editor-bridge/project/contract';
+import { ProjectBridgeDriver } from '../../drivers/project/contract';
 import {
     ProjectCapability,
     ProjectSettingsCategory,

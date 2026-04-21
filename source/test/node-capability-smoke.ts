@@ -13,10 +13,10 @@ import {
     NormalizedTransform,
     TransformInput,
     TransformType,
-} from '../editor-bridge/node/contract';
+} from '../drivers/node/contract';
 import { ComponentCapability } from '../capabilities/component/interface';
-import { RuntimeProfile } from '../runtime/profile';
-import { createCapabilityRegistry } from '../runtime/capability-registry';
+import { RuntimeProfile } from '../core/profile';
+import { createCapabilityRegistry } from '../core/capability-registry';
 
 class MockNodeDriver implements NodeBridgeDriver {
     public readonly calls: Array<{ method: string; args: unknown[] }> = [];

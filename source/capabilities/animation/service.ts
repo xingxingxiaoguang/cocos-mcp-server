@@ -1,7 +1,7 @@
 import {
     AnimationBridgeDriver,
     AnimationClipRefRecord,
-} from '../../editor-bridge/animation/contract';
+} from '../../drivers/animation/contract';
 import {
     AnimationCapability,
     AnimationClipInfoResult,

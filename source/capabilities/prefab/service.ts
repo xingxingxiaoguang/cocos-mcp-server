@@ -1,5 +1,5 @@
 import { safeSerialize } from '../../utils/serializer';
-import { PrefabBridgeDriver } from '../../editor-bridge/prefab/contract';
+import { PrefabBridgeDriver } from '../../drivers/prefab/contract';
 import {
     ApplyPrefabInput,
     CreatePrefabFromNodeInput,

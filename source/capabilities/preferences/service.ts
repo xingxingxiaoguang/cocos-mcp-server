@@ -1,6 +1,6 @@
-import { JsonValue } from '../../json';
+import { JsonValue } from '../../utils/json';
 import { safeSerialize } from '../../utils/serializer';
-import { PreferencesBridgeDriver } from '../../editor-bridge/preferences/contract';
+import { PreferencesBridgeDriver } from '../../drivers/preferences/contract';
 import {
     ExportPreferencesResult,
     OpenPreferencesInput,
