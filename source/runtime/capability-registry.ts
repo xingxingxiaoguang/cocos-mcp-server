@@ -7,6 +7,7 @@ import { PrefabService } from '../capabilities/prefab/service';
 import { ProjectService } from '../capabilities/project/service';
 import { PreferencesService } from '../capabilities/preferences/service';
 import { SceneService } from '../capabilities/scene/service';
+import { DebugService } from '../capabilities/debug/service';
 import { createAnimationDriver } from '../editor-bridge/animation/driver';
 import { createAssetDriver } from '../editor-bridge/asset/driver';
 import { createComponentDriver } from '../editor-bridge/component/driver';
@@ -16,6 +17,7 @@ import { createProjectDriver } from '../editor-bridge/project/driver';
 import { createPreferencesDriver } from '../editor-bridge/preferences/driver';
 import { createSceneDriver } from '../editor-bridge/scene/driver';
 import { createSceneQueryDriver } from '../editor-bridge/scene-query/driver';
+import { createDebugDriver } from '../editor-bridge/debug/driver';
 import { createRuntimeProfile, RuntimeProfile } from './profile';
 import type { CapabilityRegistry, CapabilityRegistryOptions } from './interface';
 export type { CapabilityRegistry, CapabilityRegistryOptions } from './interface';
@@ -33,6 +35,7 @@ export function createCapabilityRegistry(options: CapabilityRegistryOptions = {}
     const animationDriver = options.animationDriver ?? createAnimationDriver(profile);
     const prefabDriver = options.prefabDriver ?? createPrefabDriver(profile);
     const sceneDriver = options.sceneDriver ?? createSceneDriver(profile);
+    const debugDriver = options.debugDriver ?? createDebugDriver(profile);
     const componentCapability: ComponentCapability = options.componentCapability ?? new ComponentService(componentDriver);
 
     return {
@@ -45,6 +48,7 @@ export function createCapabilityRegistry(options: CapabilityRegistryOptions = {}
         animation: options.animationCapability ?? new AnimationService(animationDriver),
         prefab: options.prefabCapability ?? new PrefabService(prefabDriver),
         scene: options.sceneCapability ?? new SceneService(sceneDriver),
+        debug: options.debugCapability ?? new DebugService(debugDriver),
     };
 }
 

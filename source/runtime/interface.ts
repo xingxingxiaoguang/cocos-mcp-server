@@ -6,6 +6,7 @@ import type { ProjectCapability } from '../capabilities/project/interface';
 import type { PreferencesCapability } from '../capabilities/preferences/interface';
 import type { PrefabCapability } from '../capabilities/prefab/interface';
 import type { SceneCapability } from '../capabilities/scene/interface';
+import type { DebugCapability } from '../capabilities/debug/interface';
 import type { AnimationBridgeDriver } from '../editor-bridge/animation/contract';
 import type { AssetBridgeDriver } from '../editor-bridge/asset/contract';
 import type { ComponentBridgeDriver } from '../editor-bridge/component/contract';
@@ -15,6 +16,7 @@ import type { ProjectBridgeDriver } from '../editor-bridge/project/contract';
 import type { PreferencesBridgeDriver } from '../editor-bridge/preferences/contract';
 import type { SceneBridgeDriver } from '../editor-bridge/scene/contract';
 import type { SceneQueryDriver } from '../editor-bridge/scene-query/contract';
+import type { DebugBridgeDriver } from '../editor-bridge/debug/contract';
 import type { RuntimeProfile } from './profile';
 
 export interface CapabilityRegistry {
@@ -27,6 +29,7 @@ export interface CapabilityRegistry {
     animation: AnimationCapability;
     prefab: PrefabCapability;
     scene: SceneCapability;
+    debug: DebugCapability;
 }
 
 export interface CapabilityRegistryOptions {
@@ -48,4 +51,6 @@ export interface CapabilityRegistryOptions {
     prefabCapability?: PrefabCapability;
     sceneDriver?: SceneBridgeDriver;
     sceneCapability?: SceneCapability;
+    debugDriver?: DebugBridgeDriver;
+    debugCapability?: DebugCapability;
 }

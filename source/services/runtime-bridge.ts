@@ -1,6 +1,6 @@
 import * as http from 'http';
 import WebSocket from 'ws';
-import { ConsoleMessage, SubscriptionOptions, SubscriptionInfo, SubscriptionEvent, TraceSampleOptions, TraceOptions, CollisionWaitOptions } from '../tools/v2/debug/interface';
+import { ConsoleMessage, TraceSampleOptions, TraceOptions, CollisionWaitOptions } from '../capabilities/debug/interface';
 
 interface PendingRequest {
     resolve: (value: any) => void;
@@ -31,11 +31,6 @@ export class RuntimeBridge {
     private requestId = 0;
     private pending = new Map<number, PendingRequest>();
     private readonly requestTimeout = 10_000;
-
-    private subscriptionId = 0;
-    private subscriptions = new Map<string, SubscriptionInfo>();
-    private events: SubscriptionEvent[] = [];
-    private readonly maxEvents = 5000;
 
     // ---- lifecycle ----
 
@@ -75,9 +70,6 @@ export class RuntimeBridge {
                 if (this.agent === ws) {
                     this.agent = null;
                     this.agentInfo = null;
-                    for (const info of this.subscriptions.values()) {
-                        info.status = 'stopped';
-                    }
                     // Reject all pending requests — they will never get a response
                     for (const [, req] of this.pending) {
                         clearTimeout(req.timer);
@@ -110,8 +102,6 @@ export class RuntimeBridge {
             this.wss = null;
         }
         this.logs = [];
-        this.unsubscribeAll();
-        this.events = [];
         console.log('[RuntimeBridge] Detached');
     }
 
@@ -180,79 +170,6 @@ export class RuntimeBridge {
         return this.sendRequest('game_state', {});
     }
 
-    // ---- subscriptions ----
-
-    subscribe(options: SubscriptionOptions): string {
-        if (!this.isConnected()) {
-            throw new Error('Runtime agent not connected');
-        }
-        const subId = `sub_${++this.subscriptionId}_${Date.now()}`;
-        this.subscriptions.set(subId, {
-            id: subId,
-            type: options.type,
-            status: 'active',
-            options,
-            createdAt: new Date().toISOString(),
-            eventCount: 0,
-        });
-        this.agent!.send(JSON.stringify({ type: 'subscribe', subId, options }));
-        return subId;
-    }
-
-    unsubscribe(subId: string): boolean {
-        const info = this.subscriptions.get(subId);
-        if (!info) return false;
-        info.status = 'stopped';
-        this.subscriptions.delete(subId);
-        if (this.isConnected()) {
-            this.agent!.send(JSON.stringify({ type: 'unsubscribe', subId }));
-        }
-        return true;
-    }
-
-    unsubscribeAll(): void {
-        for (const subId of Array.from(this.subscriptions.keys())) {
-            this.unsubscribe(subId);
-        }
-    }
-
-    getEvents(subId?: string, limit: number = 100): SubscriptionEvent[] {
-        if (subId) {
-            const matching: SubscriptionEvent[] = [];
-            const remaining: SubscriptionEvent[] = [];
-            for (const evt of this.events) {
-                if (evt.subId === subId && matching.length < limit) {
-                    matching.push(evt);
-                } else {
-                    remaining.push(evt);
-                }
-            }
-            this.events = remaining;
-            return matching;
-        }
-        return this.events.splice(0, limit);
-    }
-
-    getEventCount(subId?: string): number {
-        if (subId) return this.events.filter(e => e.subId === subId).length;
-        return this.events.length;
-    }
-
-    clearEvents(subId?: string): void {
-        if (subId) {
-            this.events = this.events.filter(e => e.subId !== subId);
-        } else {
-            this.events = [];
-        }
-    }
-
-    listSubscriptions(): SubscriptionInfo[] {
-        return Array.from(this.subscriptions.values()).map(info => ({
-            ...info,
-            eventCount: this.events.filter(e => e.subId === info.id).length,
-        }));
-    }
-
     // ---- internals ----
 
     private handleAgentMessage(msg: any): void {
@@ -263,12 +180,6 @@ export class RuntimeBridge {
             case 'response':
                 this.resolveRequest(msg);
                 break;
-            case 'event':
-                this.addEvent(msg);
-                break;
-            case 'subscription_error':
-                this.handleSubscriptionError(msg);
-                break;
             case 'ready':
                 if (msg.info && this.agentInfo) {
                     this.agentInfo.url = msg.info.url;
@@ -277,28 +188,6 @@ export class RuntimeBridge {
                 console.log('[RuntimeBridge] Agent ready', msg.info?.url || '');
                 break;
         }
-    }
-
-    private addEvent(msg: any): void {
-        const event: SubscriptionEvent = {
-            subId: msg.subId,
-            timestamp: msg.timestamp || new Date().toISOString(),
-            type: msg.subType || 'node_watch',
-            nodeId: msg.nodeId,
-            data: msg.events || msg.data || {},
-        };
-        this.events.push(event);
-        while (this.events.length > this.maxEvents) {
-            this.events.shift();
-        }
-        const info = this.subscriptions.get(msg.subId);
-        if (info) info.eventCount++;
-    }
-
-    private handleSubscriptionError(msg: any): void {
-        const info = this.subscriptions.get(msg.subId);
-        if (info) info.status = 'error';
-        console.warn(`[RuntimeBridge] Subscription error for ${msg.subId}: ${msg.error}`);
     }
 
     private addLog(msg: any): void {

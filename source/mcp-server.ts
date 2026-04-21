@@ -5,6 +5,7 @@ import { MCPClient, MCPServerSettings, ServerStatus, ToolDefinition, ToolExecuto
 import { ToolConfig } from './tools/interface';
 import { createToolDefinitions, createToolExecutors } from './services/tool-registry';
 import { RuntimeBridge, setGlobalRuntimeBridge } from './services/runtime-bridge';
+import { getCapabilityRegistry, resetCapabilityRegistry } from './runtime/capability-registry';
 import { getAgentScript } from './runtime-agent/inject-script';
 
 export class MCPServer {
@@ -444,6 +445,11 @@ export class MCPServer {
         }
 
         this.clients.clear();
+
+        try {
+            getCapabilityRegistry().debug.dispose();
+        } catch { /* registry may not be initialized */ }
+        resetCapabilityRegistry();
     }
 
     public getStatus(): ServerStatus {
