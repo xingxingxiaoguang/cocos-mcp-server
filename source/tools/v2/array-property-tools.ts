@@ -1,5 +1,5 @@
 import { BaseToolExecutor, ToolDefinition, ToolResponse, makeError, ToolErrorCode } from '../base-tool';
-import { actionEnum, path as pathSchema, uuid as uuidSchema } from '../schemas/common';
+import { actionEnum, path as pathSchema, uuid as uuidSchema } from '../../utils/schemas';
 
 /**
  * ArrayPropertyToolsV2 — 数组属性操作工具 v2

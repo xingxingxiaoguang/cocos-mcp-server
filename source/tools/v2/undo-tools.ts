@@ -1,5 +1,5 @@
 import { BaseToolExecutor, ToolDefinition, ToolResponse, makeError, ToolErrorCode } from '../base-tool';
-import { actionEnum, uuid as uuidSchema } from '../schemas/common';
+import { actionEnum, uuid as uuidSchema } from '../../utils/schemas';
 
 /**
  * UndoToolsV2 — Undo 操作工具 v2
