@@ -7,7 +7,7 @@
     "editor": ">=3.8.6",
     "scripts": {
         "preinstall": "node ./scripts/preinstall.js",
-        "build": "tsc && node -e \"require('fs').cpSync('source/preview/agent.js','dist/preview/agent.js')\"",
+        "build": "tsc && node -e \"require('fs').cpSync('source/preview/agent.js','dist/preview/agent.js')\" && node -e \"require('fs').cpSync('static','dist/static',{recursive:true})\"",
         "watch": "tsc -w",
         "smoke:ipc": "node ./dist/test/ipc-contract-smoke.js",
         "smoke:foundation": "node ./dist/test/foundation-modules-smoke.js",
